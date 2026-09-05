@@ -3,10 +3,10 @@ import random
 import numpy as np
 import gymnasium as gym
 from torch.utils.tensorboard import SummaryWriter
-
+from typing import Tuple
 from ..common.exploration_rate_calculation import StepDecay
-from .replay_buffer import ReplayBuffer, Transition, TransitionBatch
-from .qnetwork import QNetwork
+from ..common.replay_buffer import ReplayBuffer, Transition, TransitionBatch
+from ..common.qnetwork import QNetwork
 
 from tqdm import tqdm
 
@@ -144,13 +144,13 @@ class DQNAgent:
 
         state,_ = self._reset_env(env, options={"is_evaluation": evaluation})
         for episode in range(self.num_eval_episodes):
-            rewards = 0
+            rewards = 0.0
             length = 0
             while True:
                 action = self.action_selection(state=state, pure_greedy=True)
                 next_state, reward, terminated, truncated, info = env.step(action)
 
-                rewards += reward
+                rewards += float(reward)
                 length += 1
 
                 if terminated or truncated:
@@ -189,7 +189,7 @@ class DQNAgent:
         t = Transition(
             state,
             action,
-            reward,
+            float(reward),
             next_state,
             terminated,
             truncated
@@ -198,7 +198,7 @@ class DQNAgent:
 
         return next_state, reward, terminated, truncated, info
 
-    def update_qnetwork(self,) -> float|None:
+    def update_qnetwork(self,) :
         if len(self.replaybuffer.pool) >= self.sample_batch_size:
             batch = self.replaybuffer.sample(batch_size=self.sample_batch_size)
 
