@@ -106,7 +106,7 @@ class DQNAgent:
         try:
             state, _ = self._reset_env(self.training_env, options={"is_evaluation": False})
             for time_step in bar:
-                next_state, _, terminated, truncated, _ = self.rollout(current_time_step=time_step, state=state)
+                next_state, _, terminated, truncated, _ = self.rollout(current_time_step=training_step, state=state)
 
                 if time_step >= self.learning_start:
                     if training_step % self.training_freq == 0:
