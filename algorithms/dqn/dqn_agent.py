@@ -4,7 +4,7 @@ import numpy as np
 import gymnasium as gym
 from torch.utils.tensorboard import SummaryWriter
 from typing import Tuple
-from ..common.exploration_rate_calculation import StepDecay
+from ..common.exploration_rate_calculation import ClassicalExploration
 from ..common.replay_buffer import ReplayBuffer, Transition, TransitionBatch
 from ..common.qnetwork import QNetwork
 
@@ -15,7 +15,7 @@ class DQNAgent:
                  input_dim,
                  output_dim,
                  seed,
-                 epsilon_strategy:StepDecay,
+                 epsilon_strategy:ClassicalExploration,
 
                  replay_buffer_size:int,
                  training_env:gym.Env,

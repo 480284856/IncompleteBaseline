@@ -13,10 +13,20 @@ class StepDecay:
         self.decreasing_rate = (epsilon_start-epsilon_end)/decay_step_size
         self.current_epsilon = epsilon_start
 
-    def step(self,current_time_step):
+    def step(self,current_time_step,*args, **kwargs):
         self.current_epsilon = max(
             self.epsilon_end,
             self.epsilon_start - self.decreasing_rate * current_time_step
         )
         return self.current_epsilon
     
+class ClassicalExploration:
+    def __init__(self):
+        '''
+        90% of exploitation
+
+        10% exploration
+        '''
+
+    def step(self, current_time_step,*args, **kwargs):
+        return 0.1
