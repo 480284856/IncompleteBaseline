@@ -15,13 +15,13 @@ class DQNAgent:
                  input_dim,
                  output_dim,
                  seed,
-                 epsilon_strategy:ClassicalExploration,
 
                  replay_buffer_size:int,
                  training_env:gym.Env,
                  eval_env:gym.Env,
                  sample_batch_size:int,
 
+                 epsilon_strategy:ClassicalExploration|None=None,
                  loss_fn=torch.nn.SmoothL1Loss(),
 
                  gamma:float=0.9,

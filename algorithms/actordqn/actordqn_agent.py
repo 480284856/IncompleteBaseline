@@ -18,7 +18,6 @@ class ActorDQNAgent(DQNAgent):
                  input_dim,
                  output_dim,
                  seed,
-                 epsilon_strategy:StepDecay,
 
                  replay_buffer_size:int,
                  training_env:gym.Env,
@@ -43,7 +42,6 @@ class ActorDQNAgent(DQNAgent):
         Args:
             input_dim: The dimension of observation.
             output_dim: The dimension of action space.
-            epsilon_strategy: How you change the exploration degree with time step going.
             sample_batch_size: The size of data sampled at once from the replay buffer.
             gamma: Discount factor for future return.
             tau: The proportion to integrate the weight of the online network to the talking network.
@@ -59,7 +57,6 @@ class ActorDQNAgent(DQNAgent):
             input_dim=input_dim,
             output_dim=output_dim,
             seed=seed,
-            epsilon_strategy=epsilon_strategy,
 
             replay_buffer_size=replay_buffer_size,
             training_env=training_env,
