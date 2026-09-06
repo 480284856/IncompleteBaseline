@@ -18,7 +18,6 @@ class ActorDQNAgent(DQNAgent):
                  input_dim,
                  output_dim,
                  seed,
-                 epsilon_strategy:StepDecay,
 
                  replay_buffer_size:int,
                  training_env:gym.Env,
@@ -59,7 +58,6 @@ class ActorDQNAgent(DQNAgent):
             input_dim=input_dim,
             output_dim=output_dim,
             seed=seed,
-            epsilon_strategy=epsilon_strategy,
 
             replay_buffer_size=replay_buffer_size,
             training_env=training_env,
