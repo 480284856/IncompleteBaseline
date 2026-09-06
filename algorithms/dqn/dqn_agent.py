@@ -102,29 +102,31 @@ class DQNAgent:
 
     def train(self,):
         bar = tqdm(range(1,self.total_time_steps+1))
+        training_step = 1
         try:
             state, _ = self._reset_env(self.training_env, options={"is_evaluation": False})
             for time_step in bar:
                 next_state, _, terminated, truncated, _ = self.rollout(current_time_step=time_step, state=state)
 
                 if time_step >= self.learning_start:
-                    if time_step % self.training_freq == 0:
+                    if training_step % self.training_freq == 0:
                         for _ in range(self.grad_step_per_train):
                             loss = self.update_qnetwork()
                             if loss is not None:
-                                self.tensorboard_writer.add_scalar("training/loss", loss, time_step)
+                                self.tensorboard_writer.add_scalar("training/loss", loss, training_step)
                         self.update_target_network()
 
-                if self.eval_freq is not None and time_step % self.eval_freq == 0:
-                    mean_return, mean_length, success_rate = self.evaluation(env=self.eval_env, evaluation=True)
-                    self.tensorboard_writer.add_scalar("eval/return", mean_return, time_step)
-                    self.tensorboard_writer.add_scalar("eval/steps", mean_length, time_step)
-                    self.tensorboard_writer.add_scalar("eval/success_rate", success_rate, time_step)
-                    mean_return, mean_length, success_rate = self.evaluation(env=self.eval_env, evaluation=False)
-                    self.tensorboard_writer.add_scalar("training/return", mean_return, time_step)
-                    self.tensorboard_writer.add_scalar("training/steps", mean_length, time_step)
-                    self.tensorboard_writer.add_scalar("training/success_rate", success_rate, time_step)
-                    self.tensorboard_writer.flush()
+                    if self.eval_freq is not None and training_step % self.eval_freq == 0:
+                        mean_return, mean_length, success_rate = self.evaluation(env=self.eval_env, evaluation=True)
+                        self.tensorboard_writer.add_scalar("eval/return", mean_return, training_step)
+                        self.tensorboard_writer.add_scalar("eval/steps", mean_length, training_step)
+                        self.tensorboard_writer.add_scalar("eval/success_rate", success_rate, training_step)
+                        mean_return, mean_length, success_rate = self.evaluation(env=self.eval_env, evaluation=False)
+                        self.tensorboard_writer.add_scalar("training/return", mean_return, training_step)
+                        self.tensorboard_writer.add_scalar("training/steps", mean_length, training_step)
+                        self.tensorboard_writer.add_scalar("training/success_rate", success_rate, training_step)
+                        self.tensorboard_writer.flush()
+                    training_step += 1
 
                 if terminated or truncated:
                     state, _ = self._reset_env(self.training_env, options={"is_evaluation": False})
