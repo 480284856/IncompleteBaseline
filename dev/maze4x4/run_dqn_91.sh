@@ -1,7 +1,7 @@
 cd /Users/jay/Desktop/RL/project/
 
 # --max-episode-steps 1600: 100 times of maze size 
-python -m IncompleteBaseline.dev.main --tensorboard-log-dir "IncompleteBaseline/dev/logs/qdn/maze4x4/fixed_epsilon/step-1600/v1" \
+python -m IncompleteBaseline.dev.main --tensorboard-log-dir "IncompleteBaseline/dev/logs/qdn/maze4x4/fixed_epsilon/step-1600/mabrollout/v1" \
     --width 4 \
     --height 4 \
     --max-episode-steps-eval 16 \

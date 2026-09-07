@@ -8,6 +8,7 @@ from typing import Tuple
 from ..common.exploration_rate_calculation import ClassicalExploration
 from ..common.replay_buffer import ReplayBuffer, Transition, TransitionBatch
 from ..common.qnetwork import QNetwork
+from ..common.rollout import MABRollout
 
 from tqdm import tqdm
 
@@ -89,6 +90,8 @@ class DQNAgent:
         self.num_eval_episodes=num_eval_episodes
         self.eval_freq=eval_freq
         self.max_episode_steps_warmup=max_episode_steps_warmup
+
+        self.rollout_warmup = MABRollout(self.training_env,)
 
         if self.max_episode_steps_warmup is not None:
             if (isinstance(self.max_episode_steps_warmup, bool)
@@ -223,7 +226,7 @@ class DQNAgent:
         else:
             exploration_rate = self.epsilon_strategy.step(current_time_step)
             if self._rng.random() < exploration_rate:
-                return self._rng.choice(range(0,self.output_dim))
+                return self.rollout_warmup.action_selection(state=state)
             else:
                 with torch.no_grad():
                     return self.qnetwork(state).argmax().item()
@@ -251,8 +254,7 @@ class DQNAgent:
         assert isinstance(state, torch.Tensor)
         assert state.shape == (1,self.input_dim), f"Expect shape of (1,{self.input_dim}), got {state.shape}"
 
-        action = self._rng.choice(range(0,self.output_dim))
-        next_state, reward, terminated, truncated, info = self.training_env.step(action)
+        action, next_state, reward, terminated, truncated, info = self.rollout_warmup.step(state=state)
 
         t = Transition(
             state,
