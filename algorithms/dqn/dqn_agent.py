@@ -1,4 +1,5 @@
 import torch
+import copy
 import random
 import numpy as np
 import gymnasium as gym
@@ -101,6 +102,9 @@ class DQNAgent:
         self.tensorboard_writer = SummaryWriter(log_dir=tensorboard_log_dir)
         self.transition_counter=set()
 
+        self.best_solved_rate=0
+        self.best_model = None
+
     def train(self,):
         bar = tqdm(range(1,self.total_time_steps+1))
         training_step = 1
@@ -179,6 +183,11 @@ class DQNAgent:
 
             returns.append(rewards)
             lengths.append(length)
+
+        if evaluation and self.best_solved_rate < (solved/self.num_eval_episodes):
+            self.best_solved_rate = solved/self.num_eval_episodes
+            self.best_model = copy.deepcopy(self.qnetwork)
+        
         return np.mean(returns), np.mean(lengths), solved/self.num_eval_episodes
 
     def action_selection(self, state:torch.Tensor, current_time_step:int|None=None, pure_greedy:bool=False) -> int:
@@ -277,4 +286,48 @@ class DQNAgent:
             ] * self.tau + target_net_state_dict[key] * (1 - self.tau)
         self.q_target_network.load_state_dict(target_net_state_dict)
 
-            
+    def final_evaluation(self) -> Tuple[float, float, float]:
+        """
+        Evaluate each validation maze once and log final metrics after training.
+        """
+
+        env = self.eval_env
+        num_mazes = len(env.unwrapped.evaluation_mazes)
+        if num_mazes == 0:
+            raise RuntimeError("The evaluation maze set is empty.")
+
+        returns, lengths = [], []
+        solved = 0
+        was_training = self.qnetwork.training
+        self.qnetwork.eval()
+        try:
+            with torch.no_grad():
+                for maze_index in range(num_mazes):
+                    state, _ = self._reset_env(env, options={
+                        "is_evaluation": True,
+                        "maze_index": maze_index,
+                    })
+                    rewards = 0.0
+                    length = 0
+                    while True:
+                        action = self.action_selection(state=state, pure_greedy=True)
+                        state, reward, terminated, truncated, _ = env.step(action)
+                        rewards += float(reward)
+                        length += 1
+                        if terminated or truncated:
+                            solved += int(terminated)
+                            break
+                    returns.append(rewards)
+                    lengths.append(length)
+        finally:
+            self.qnetwork.train(was_training)
+
+        mean_return = float(np.mean(returns))
+        mean_length = float(np.mean(lengths))
+        success_rate = solved / num_mazes
+        # train() closes its writer, so reopen the same run directory.
+        with SummaryWriter(log_dir=self.tensorboard_writer.log_dir) as writer:
+            writer.add_scalar("final_eval/return", mean_return, self.total_time_steps)
+            writer.add_scalar("final_eval/steps", mean_length, self.total_time_steps)
+            writer.add_scalar("final_eval/success_rate", success_rate, self.total_time_steps)
+        return mean_return, mean_length, success_rate

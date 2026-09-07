@@ -1,5 +1,6 @@
 '''The idea comes from Mr. Griesbach(https://github.com/Sebastian-Griesbach)'''
 import torch
+import copy
 import random
 import numpy as np
 import torch.nn as nn
@@ -92,6 +93,10 @@ class ActorDQNAgent(DQNAgent):
         self.training_rng.manual_seed(seed)
         self.eval_rng.manual_seed(seed)
         self.transition_counter=set()
+
+        self.best_solved_rate=0
+        self.best_model = None
+
     def update_qnetwork(self,):
         if len(self.replaybuffer.pool) >= self.sample_batch_size:
             batch = self.replaybuffer.sample(batch_size=self.sample_batch_size)
@@ -200,6 +205,61 @@ class ActorDQNAgent(DQNAgent):
             self.tensorboard_writer.close()
             bar.close()
 
+    def final_evaluation(self) -> Tuple[float, float, float]:
+        """
+        [Warning] Enter function final evaluation will change actor DQN network to the best version, so, keep in mind to call it ONLY after training.
+
+        Evaluate each validation maze once and log final metrics after training.
+
+        Uses the actor's sampled policy, as in periodic evaluation. Returns
+        mean episode return, mean episode length, and success rate.
+        """
+        env = self.eval_env
+        if self.best_model != None:
+            self.actor_dqn_network = self.best_model
+            print("[Warning] Enter function final evaluation will change actor TQN network to the best version, so, keep in mind to call it ONLY after training.")
+
+
+        num_mazes = len(env.unwrapped.evaluation_mazes)
+        if num_mazes == 0:
+            raise RuntimeError("The evaluation maze set is empty.")
+
+        returns, lengths = [], []
+        solved = 0
+        was_training = self.actor_dqn_network.training
+        self.actor_dqn_network.eval()
+        try:
+            with torch.no_grad():
+                for maze_index in range(num_mazes):
+                    state, _ = self._reset_env(env, options={
+                        "is_evaluation": True,
+                        "maze_index": maze_index,
+                    })
+                    rewards = 0.0
+                    length = 0
+                    while True:
+                        action = self.action_selection(state=state)
+                        state, reward, terminated, truncated, _ = env.step(action)
+                        rewards += float(reward)
+                        length += 1
+                        if terminated or truncated:
+                            solved += int(terminated)
+                            break
+                    returns.append(rewards)
+                    lengths.append(length)
+        finally:
+            self.actor_dqn_network.train(was_training)
+
+        mean_return = float(np.mean(returns))
+        mean_length = float(np.mean(lengths))
+        success_rate = solved / num_mazes
+        # train() closes its writer, so reopen the same run directory.
+        with SummaryWriter(log_dir=self.tensorboard_writer.log_dir) as writer:
+            writer.add_scalar("final_eval/return", mean_return, self.total_time_steps)
+            writer.add_scalar("final_eval/steps", mean_length, self.total_time_steps)
+            writer.add_scalar("final_eval/success_rate", success_rate, self.total_time_steps)
+        return mean_return, mean_length, success_rate
+
     def evaluation(self,env:gym.Env, evaluation:bool=True):
         returns = []
         lengths = []
@@ -226,4 +286,9 @@ class ActorDQNAgent(DQNAgent):
 
             returns.append(rewards)
             lengths.append(length)
+
+        if evaluation and self.best_solved_rate < (solved/self.num_eval_episodes):
+            self.best_solved_rate = solved/self.num_eval_episodes
+            self.best_model = copy.deepcopy(self.actor_dqn_network)
+        
         return np.mean(returns), np.mean(lengths), solved/self.num_eval_episodes

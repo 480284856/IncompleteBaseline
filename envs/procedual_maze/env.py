@@ -219,9 +219,15 @@ class Maze(gym.Env):
             split_name = "evaluation" if self.is_evaluation else "training"
             raise RuntimeError(f"the {split_name} maze set is empty")
 
-        # self.np_random is controled by the gymnasium.Env superclass and is seeded by the reset() call.
-        # select a random integer from the range [0, len(maze_pool))
-        maze_index = int(self.np_random.integers(len(maze_pool)))
+        if options is not None and "maze_index" in options:
+            maze_index = int(options["maze_index"])
+            if not 0 <= maze_index < len(maze_pool):
+                raise IndexError(f"maze_index out of range: {maze_index}")
+        else:
+            # self.np_random is controled by the gymnasium.Env superclass and is seeded by the reset() call.
+            # select a random integer from the range [0, len(maze_pool))
+            maze_index = int(self.np_random.integers(len(maze_pool)))
+
         self.current_maze = np.asarray(maze_pool[maze_index], dtype=np.int8).copy()
         if self.current_maze.shape != (self.height, self.width):
             raise ValueError(
@@ -286,6 +292,7 @@ class Maze(gym.Env):
             else self.train_step_limitation
         )
         truncated = self.step_elapsed >= step_limit
+        # print(f"[W] After trailing in a same maze {step_limit} time, trucate it to go to a new maze...")
 
         reward = 1.0 if terminated else -0.01 if not invalid_move else -0.05
 

@@ -1,24 +1,32 @@
-python main.py --tensorboard-log-dir "./logs/qdn/maze4x4/fixed_epsilon/v1" \
+cd /Users/jay/Desktop/RL/project/
+
+# --max-episode-steps 1600: 100 times of maze size 
+python -m IncompleteBaseline.dev.main --tensorboard-log-dir "IncompleteBaseline/dev/logs/qdn/maze4x4/fixed_epsilon/rare_random_sampling/v1" \
     --width 4 \
     --height 4 \
     --max-episode-steps-eval 16 \
-    --total-time-steps 409600 \
-    --learning-starts 204800 \
+    --max-episode-steps 1600 \
+    --total-time-steps 204800 \
+    --learning-starts 64 \
     --epsilon-strategy "91Epsilon" \
     --seed 42
-python main.py --tensorboard-log-dir "./logs/qdn/maze4x4/fixed_epsilon/v2" \
+
+python -m IncompleteBaseline.dev.main --tensorboard-log-dir "IncompleteBaseline/dev/logs/qdn/maze4x4/fixed_epsilon/rare_random_sampling/v2" \
     --width 4 \
     --height 4 \
     --max-episode-steps-eval 16 \
-    --total-time-steps 409600 \
-    --learning-starts 204800 \
+    --total-time-steps 204800 \
+    --learning-starts 64 \
     --epsilon-strategy "91Epsilon" \
+    --max-episode-steps 1600 \
     --seed 43
-python main.py --tensorboard-log-dir "./logs/qdn/maze4x4/fixed_epsilon/v3" \
+
+python -m IncompleteBaseline.dev.main --tensorboard-log-dir "IncompleteBaseline/dev/logs/qdn/maze4x4/fixed_epsilon/rare_random_sampling/v3" \
     --width 4 \
     --height 4 \
     --max-episode-steps-eval 16 \
-    --total-time-steps 409600 \
-    --learning-starts 204800 \
+    --max-episode-steps 1600 \
+    --total-time-steps 204800 \
+    --learning-starts 64 \
     --epsilon-strategy "91Epsilon" \
     --seed 44
