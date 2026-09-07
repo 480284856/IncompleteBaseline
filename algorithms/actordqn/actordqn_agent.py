@@ -91,7 +91,7 @@ class ActorDQNAgent(DQNAgent):
         self.eval_rng = torch.Generator()
         self.training_rng.manual_seed(seed)
         self.eval_rng.manual_seed(seed)
-
+        self.transition_counter=set()
     def update_qnetwork(self,):
         if len(self.replaybuffer.pool) >= self.sample_batch_size:
             batch = self.replaybuffer.sample(batch_size=self.sample_batch_size)
@@ -146,16 +146,23 @@ class ActorDQNAgent(DQNAgent):
         self.replaybuffer.push(t)
 
         return next_state, reward, terminated, truncated, info
-
+    
     def train(self,):
         bar = tqdm(range(1,self.total_time_steps+1))
         training_step = 1
+        solved_episode=0
         try:
             state, _ = self._reset_env(self.training_env, options={"is_evaluation": False})
             for time_step in bar:
-                next_state, _, terminated, truncated, _ = self.rollout(state=state)
-
+                state_key = tuple(state.detach().cpu().reshape(-1).tolist())
+                self.transition_counter.add(state_key)
+                self.tensorboard_writer.add_scalar(
+                    "debug/num_unique_states",
+                    len(self.transition_counter),
+                    time_step,
+                )
                 if time_step >= self.learning_start:
+                    next_state, _, terminated, truncated, _ = self.rollout(state=state)
                     if training_step % self.training_freq == 0:
                         for _ in range(self.grad_step_per_train):
                             loss = self.update_qnetwork()
@@ -174,9 +181,16 @@ class ActorDQNAgent(DQNAgent):
                         self.tensorboard_writer.add_scalar("training/success_rate", success_rate, training_step)
                         self.tensorboard_writer.flush()
                     training_step += 1
+                else:
+                    # random rollout
+                    next_state, _, terminated, truncated, _ = self.random_rollout(state=state)
 
                 if terminated or truncated:
                     state, _ = self._reset_env(self.training_env, options={"is_evaluation": False})
+                    if time_step >= self.learning_start:
+                        if terminated:
+                            solved_episode += 1
+                            self.tensorboard_writer.add_scalar("debug/solved_episode", solved_episode, training_step)
                     continue
                 else:
                     state = next_state
