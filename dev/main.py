@@ -17,9 +17,9 @@ import torch
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from IncompleteBaseline.algorithms.common.exploration_rate_calculation import ClassicalExploration,StepDecay
-from IncompleteBaseline.algorithms.dqn.dqn_agent import DQNAgent
-from IncompleteBaseline.envs.procedual_maze.env import Maze
+from ..algorithms.common.exploration_rate_calculation import ClassicalExploration,StepDecay
+from ..algorithms.dqn.dqn_agent import DQNAgent
+from ..envs.procedual_maze.env import Maze
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse command-line options for a training run."""
@@ -33,6 +33,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         type=int, default=10_000, 
                         help="The maximum step to work on an episode in training. " \
                         "The episode will be truncated if the step limit used is larger than this parameter.")
+    parser.add_argument(
+        "--max-episode-steps-warmup",
+        type=int,
+        default=None,
+        help="Episode step limit before learning starts (default: --max-episode-steps).",
+    )
     parser.add_argument("--max-episode-steps-eval", 
                         type=int, 
                         default=16, 
@@ -69,6 +75,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--epsilon-strategy", type=str, choices=["StepDecay", "91Epsilon"], default="91Epsilon")
     args = parser.parse_args(argv)
+    if args.max_episode_steps_warmup is not None and args.max_episode_steps_warmup < 1:
+        parser.error("--max-episode-steps-warmup must be a positive integer")
 
     print("Arguments:")
     for key, value in vars(args).items():
@@ -156,6 +164,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             tau=args.tau,
             total_time_steps=args.total_time_steps,
             learning_start=args.learning_starts,
+            max_episode_steps_warmup=args.max_episode_steps_warmup,
             training_freq=args.training_freq,
             grad_step_per_train=args.grad_step_per_train,
             num_eval_episodes=args.evaluation_episodes,

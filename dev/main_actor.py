@@ -17,9 +17,9 @@ import torch
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from IncompleteBaseline.algorithms.common.exploration_rate_calculation import StepDecay
-from IncompleteBaseline.algorithms.actordqn.actordqn_agent import ActorDQNAgent
-from IncompleteBaseline.envs.procedual_maze.env import Maze
+from ..algorithms.common.exploration_rate_calculation import StepDecay
+from ..algorithms.actordqn.actordqn_agent import ActorDQNAgent
+from ..envs.procedual_maze.env import Maze
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse command-line options for a training run."""

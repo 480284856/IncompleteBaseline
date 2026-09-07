@@ -36,7 +36,8 @@ class DQNAgent:
 
                  num_eval_episodes:int=100,
                  eval_freq:int|None=10_000,
-                 tensorboard_log_dir:str|None=None):
+                 tensorboard_log_dir:str|None=None,
+                 max_episode_steps_warmup:int|None=None):
         '''
         Args:
             input_dim: The dimension of observation.
@@ -52,6 +53,9 @@ class DQNAgent:
             num_eval_episodes: Number of episodes to run per evaluation.
             eval_freq: Evaluate every N training environment steps, including before learning starts. None disables periodic evaluation.
             tensorboard_log_dir: TensorBoard output directory. None creates an automatic run directory under runs/.
+            max_episode_steps_warmup: Episode step limit while time_step < learning_start.
+                None keeps the environment's training limit. Requires an environment with
+                train_step_limitation; switching limits preserves the current episode's elapsed steps.
         '''
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -84,6 +88,15 @@ class DQNAgent:
         self.grad_step_per_train=grad_step_per_train
         self.num_eval_episodes=num_eval_episodes
         self.eval_freq=eval_freq
+        self.max_episode_steps_warmup=max_episode_steps_warmup
+
+        if self.max_episode_steps_warmup is not None:
+            if (isinstance(self.max_episode_steps_warmup, bool)
+                    or not isinstance(self.max_episode_steps_warmup, int)
+                    or self.max_episode_steps_warmup < 1):
+                raise ValueError("max_episode_steps_warmup must be a positive integer or None.")
+            if not hasattr(self.training_env.unwrapped, "train_step_limitation"):
+                raise ValueError("The warmup limit requires an environment with train_step_limitation.")
 
         if self.eval_freq is not None:
             if isinstance(self.eval_freq, bool) or not isinstance(self.eval_freq, int) or self.eval_freq < 1:
@@ -109,9 +122,18 @@ class DQNAgent:
         bar = tqdm(range(1,self.total_time_steps+1))
         training_step = 1
         solved_episode=0
+        training_limit = None
+        if self.max_episode_steps_warmup is not None:
+            training_limit = self.training_env.unwrapped.train_step_limitation
         try:
             state, _ = self._reset_env(self.training_env, options={"is_evaluation": False})
             for time_step in bar:
+                if self.max_episode_steps_warmup is not None:
+                    self.training_env.unwrapped.train_step_limitation = (
+                        self.max_episode_steps_warmup
+                        if time_step < self.learning_start
+                        else training_limit
+                    )
                 state_key = tuple(state.detach().cpu().reshape(-1).tolist())
                 self.transition_counter.add(state_key)
                 self.tensorboard_writer.add_scalar(
@@ -154,6 +176,8 @@ class DQNAgent:
         # The finally block ensures the writer saves buffered logs and closes the progress bar 
         # when training finishes, raises an error, or is interrupted with Ctrl+C
         finally:
+            if self.max_episode_steps_warmup is not None:
+                self.training_env.unwrapped.train_step_limitation = training_limit
             self.tensorboard_writer.close()
             bar.close()
 
