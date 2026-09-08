@@ -9,7 +9,6 @@ from ..common.exploration_rate_calculation import ClassicalExploration
 from ..common.replay_buffer import ReplayBuffer, Transition, TransitionBatch
 from ..common.qnetwork import QNetwork
 from ..common.rollout import MABRollout
-
 from tqdm import tqdm
 
 class DQNAgent:
@@ -38,7 +37,10 @@ class DQNAgent:
                  num_eval_episodes:int=100,
                  eval_freq:int|None=10_000,
                  tensorboard_log_dir:str|None=None,
-                 max_episode_steps_warmup:int|None=None):
+
+                 max_episode_steps_warmup:int|None=None,
+                 random_rollout_stategy:str|None=None,
+                 eps_exp_strategy:str|None=None):
         '''
         Args:
             input_dim: The dimension of observation.
@@ -57,6 +59,10 @@ class DQNAgent:
             max_episode_steps_warmup: Episode step limit while time_step < learning_start.
                 None keeps the environment's training limit. Requires an environment with
                 train_step_limitation; switching limits preserves the current episode's elapsed steps.
+            random_rollout_stategy: The exploration strategy used during the random sampling stage at the beginning of the training. 
+                "None" means uniformly choosing an action from the states.
+            eps_exp_strategy: What kinds of strategy are used for Epsilon-greedy when exploration is chosen? 
+                "None" means using a classical random choice.
         '''
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -89,9 +95,25 @@ class DQNAgent:
         self.grad_step_per_train=grad_step_per_train
         self.num_eval_episodes=num_eval_episodes
         self.eval_freq=eval_freq
+
         self.max_episode_steps_warmup=max_episode_steps_warmup
 
-        self.rollout_warmup = MABRollout(self.training_env,)
+        assert random_rollout_stategy in ["MABRollout", None]
+        if random_rollout_stategy == "MABRollout":
+            self.rollout_warmup = MABRollout(self.training_env,seed=seed)
+        else:
+            if random_rollout_stategy == None:
+                self.rollout_warmup = None
+
+        assert eps_exp_strategy in ["MABRollout", None]
+        if eps_exp_strategy == "MABRollout":
+            self.eps_exp_strategy = (MABRollout(self.training_env,seed=seed)
+                                     if not self.rollout_warmup
+                                     else self.rollout_warmup
+            )
+        else:
+            if eps_exp_strategy==None:
+                self.eps_exp_strategy=eps_exp_strategy
 
         if self.max_episode_steps_warmup is not None:
             if (isinstance(self.max_episode_steps_warmup, bool)
@@ -194,7 +216,7 @@ class DQNAgent:
             rewards = 0.0
             length = 0
             while True:
-                action = self.action_selection(state=state, pure_greedy=True)
+                action = self.get_policy(state=state)
                 next_state, reward, terminated, truncated, info = env.step(action)
 
                 rewards += float(reward)
@@ -217,26 +239,27 @@ class DQNAgent:
         
         return np.mean(returns), np.mean(lengths), solved/self.num_eval_episodes
 
-    def action_selection(self, state:torch.Tensor, current_time_step:int|None=None, pure_greedy:bool=False) -> int:
-        assert state.shape == (1,self.input_dim), "Current implementation is only for single environment, not for vectorized environment."
-
-        if pure_greedy:
-            with torch.no_grad():
+    def get_policy(self, state:torch.Tensor) -> int:
+        with torch.no_grad():
                 return self.qnetwork(state).argmax().item()
-        else:
-            exploration_rate = self.epsilon_strategy.step(current_time_step)
-            if self._rng.random() < exploration_rate:
-                return self.rollout_warmup.action_selection(state=state)
-            else:
-                with torch.no_grad():
-                    return self.qnetwork(state).argmax().item()
-
+        
     def rollout(self, current_time_step:int, state:torch.Tensor):
         assert isinstance(state, torch.Tensor)
         assert state.shape == (1,self.input_dim), f"Expect shape of (1,{self.input_dim}), got {state.shape}"
+        assert state.shape == (1,self.input_dim), "Current implementation is only for single environment, not for vectorized environment."
         
-        action = self.action_selection(state=state, current_time_step=current_time_step)
-        next_state, reward, terminated, truncated, info = self.training_env.step(action)
+        exploration_rate = self.epsilon_strategy.step(current_time_step)
+        if self._rng.random() < exploration_rate:
+            if isinstance(self.eps_exp_strategy, MABRollout):
+                action, next_state, reward, terminated, truncated, info = self.eps_exp_strategy.step(state=state)
+            else:
+                if self.eps_exp_strategy==None: # classical epsilon-greedy
+                    action = self._rng.choice(range(0, self.output_dim))
+                    next_state, reward, terminated, truncated, info = self.training_env.step(action)
+        else:
+            with torch.no_grad():
+                action = self.qnetwork(state).argmax().item()
+                next_state, reward, terminated, truncated, info = self.training_env.step(action)
 
         t = Transition(
             state,
@@ -254,7 +277,12 @@ class DQNAgent:
         assert isinstance(state, torch.Tensor)
         assert state.shape == (1,self.input_dim), f"Expect shape of (1,{self.input_dim}), got {state.shape}"
 
-        action, next_state, reward, terminated, truncated, info = self.rollout_warmup.step(state=state)
+        if isinstance(self.rollout_warmup, MABRollout):
+            action, next_state, reward, terminated, truncated, info = self.rollout_warmup.step(state=state)
+        else:
+            if self.rollout_warmup == None:
+                action = self._rng.choice(range(0, self.output_dim))
+                next_state, reward, terminated, truncated, info = self.training_env.step(action)
 
         t = Transition(
             state,
@@ -336,7 +364,7 @@ class DQNAgent:
                     rewards = 0.0
                     length = 0
                     while True:
-                        action = self.action_selection(state=state, pure_greedy=True)
+                        action = self.get_policy(state=state)
                         state, reward, terminated, truncated, _ = env.step(action)
                         rewards += float(reward)
                         length += 1

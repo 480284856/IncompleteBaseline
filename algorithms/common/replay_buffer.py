@@ -59,7 +59,6 @@ class ReplayBuffer:
             )
         assert transition.state.shape == (1, self.input_dim)
         assert transition.next_state.shape == (1, self.input_dim)
-        
         self.pool.append(transition)
 
     def sample(self, batch_size):

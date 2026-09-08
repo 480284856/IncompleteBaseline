@@ -14,6 +14,11 @@ class MABRollout:
 
     def action_selection(self, state:torch.Tensor):
         key = tuple(state.detach().cpu().reshape(-1).tolist())
+        if key not in self.preferences:
+            self.preferences[key] = [
+                torch.tensor([0 for _ in range(self.env.action_space.n)], dtype=torch.float32),   # Q(a)
+                torch.tensor([0 for _ in range(self.env.action_space.n)], dtype=torch.int32)      # N(a)
+            ]
 
         q,n = self.preferences[key]
         untried = torch.where(n == 0)[0].tolist()
@@ -36,14 +41,8 @@ class MABRollout:
             2. update preference based on feedback
         '''
         key = tuple(state.detach().cpu().reshape(-1).tolist())
-        if key not in self.preferences:
-            self.preferences[key] = [
-                torch.tensor([0 for _ in range(self.env.action_space.n)], dtype=torch.float32),   # Q(a)
-                torch.tensor([0 for _ in range(self.env.action_space.n)], dtype=torch.int32)      # N(a)
-            ]
-        action = self.action_selection(state)
+        action = self.action_selection(state=state)
 
-            
         next_state, reward, terminated, truncated, info = self.env.step(action)
 
         # update preference based on feedback
