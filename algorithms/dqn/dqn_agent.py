@@ -6,7 +6,7 @@ import gymnasium as gym
 from torch.utils.tensorboard import SummaryWriter
 from typing import Tuple
 from ..common.exploration_rate_calculation import ClassicalExploration
-from ..common.replay_buffer import ReplayBuffer, Transition, TransitionBatch
+from ..common.replay_buffer.replay_buffer import ReplayBuffer, Transition, TransitionBatch
 from ..common.qnetwork import QNetwork
 from ..common.rollout import MABRollout
 from tqdm import tqdm

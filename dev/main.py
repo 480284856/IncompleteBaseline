@@ -75,7 +75,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 class TensorObservation(gym.ObservationWrapper):
-    """Provide the baseline's single-environment float32 tensor input."""
+    """
+    A wrapper that will post-process observation after calling env.reset or env.step by calling self.observation.
+    """
 
     def __init__(self, env: Maze):
         super().__init__(env)

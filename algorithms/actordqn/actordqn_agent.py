@@ -9,7 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 from typing import Tuple
 
 from ..common.exploration_rate_calculation import StepDecay
-from ..common.replay_buffer import ReplayBuffer, Transition, TransitionBatch
+from ..common.replay_buffer.replay_buffer import ReplayBuffer, Transition, TransitionBatch
 from ..common.qnetwork import QNetwork
 from ..dqn.dqn_agent import DQNAgent
 from tqdm import tqdm
