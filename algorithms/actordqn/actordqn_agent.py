@@ -15,7 +15,6 @@ from ..dqn.dqn_agent import DQNAgent
 from tqdm import tqdm
 
 class ActorDQNAgent(DQNAgent):
-    """Uniform random-action baseline; networks are never updated."""
     def __init__(self,
                  input_dim,
                  output_dim,
@@ -50,7 +49,7 @@ class ActorDQNAgent(DQNAgent):
             tau: The proportion to integrate the weight of the online network to the talking network.
             total_time_steps: Total times to call env.step.
             learning_start: Before starting to update the target Q-network, the steps we take to sample data from the environment.
-            training_freq: Ignored by the random baseline; no model updates are performed.
+            training_freq: How often do we update the model?
             grad_step_per_train: How many times do we perform supervised learning during each training stage?
             num_eval_episodes: Number of episodes to run per evaluation.
             eval_freq: Evaluate every N training environment steps, including before learning starts. None disables periodic evaluation.
@@ -74,9 +73,7 @@ class ActorDQNAgent(DQNAgent):
 
             total_time_steps=total_time_steps,
             learning_start=learning_start,
-            # The parent requires a frequency below total_time_steps.
-            # This baseline never uses it, including when the CLI passes a huge value.
-            training_freq=1,
+            training_freq=training_freq,
             grad_step_per_train=grad_step_per_train,
 
             num_eval_episodes=num_eval_episodes,
@@ -101,16 +98,40 @@ class ActorDQNAgent(DQNAgent):
         self.best_model = None
 
     def update_qnetwork(self,):
-        # Keep the interface, but disable optimization for the random baseline.
+        if len(self.replaybuffer.pool) >= self.sample_batch_size:
+            batch = self.replaybuffer.sample(batch_size=self.sample_batch_size)
+
+            td_target = self._td_target(batch)
+
+            prediction = self.qnetwork(batch.states)
+            estimation = prediction.gather(1, batch.actions)
+
+            loss = self.loss_fn(td_target, estimation)
+            self.optim.zero_grad()
+            loss.backward()
+            self.optim.step()
+
+            # update for actor qnetwork
+            label = prediction.argmax(dim=1)
+            logits = self.actor_dqn_network(batch.states)
+            loss_actor = self.loss_fn_actor(logits, label)
+            self.optim_actor.zero_grad()
+            loss_actor.backward()
+            self.optim_actor.step()
+
+            return loss_actor.item()
         return None
 
     def action_selection(self, state:torch.Tensor, is_training:bool=False) -> int:
         assert state.shape == (1,self.input_dim), "Current implementation is only for single environment, not for vectorized environment."
 
-        return int(torch.randint(
-            self.output_dim, (1,),
-            generator=self.training_rng if is_training else self.eval_rng,
-        ).item())
+        with torch.no_grad():
+            q_values = self.actor_dqn_network(state)
+            action_probs = torch.softmax(q_values, dim=1)
+            return int(torch.multinomial(
+                action_probs, num_samples=1,
+                generator=self.training_rng if is_training else self.eval_rng
+            ).item())
 
     def rollout(self, state:torch.Tensor):
         assert isinstance(state, torch.Tensor)
@@ -147,6 +168,13 @@ class ActorDQNAgent(DQNAgent):
                 )
                 if time_step >= self.learning_start:
                     next_state, _, terminated, truncated, _ = self.rollout(state=state)
+                    if training_step % self.training_freq == 0:
+                        for _ in range(self.grad_step_per_train):
+                            loss = self.update_qnetwork()
+                            if loss is not None:
+                                self.tensorboard_writer.add_scalar("training/loss", loss, training_step)
+                        self.update_target_network()
+
                     if self.eval_freq is not None and training_step % self.eval_freq == 0:
                         mean_return, mean_length, success_rate = self.evaluation(env=self.eval_env, evaluation=True)
                         self.tensorboard_writer.add_scalar("eval/return", mean_return, training_step)
@@ -179,9 +207,11 @@ class ActorDQNAgent(DQNAgent):
 
     def final_evaluation(self) -> Tuple[float, float, float]:
         """
+        [Warning] Enter function final evaluation will change actor DQN network to the best version, so, keep in mind to call it ONLY after training.
+
         Evaluate each validation maze once and log final metrics after training.
 
-        Uses uniform random actions, as in periodic evaluation. Returns
+        Uses the actor's sampled policy, as in periodic evaluation. Returns
         mean episode return, mean episode length, and success rate.
         """
         env = self.eval_env
@@ -260,6 +290,5 @@ class ActorDQNAgent(DQNAgent):
         if evaluation and self.best_solved_rate < (solved/self.num_eval_episodes):
             self.best_solved_rate = solved/self.num_eval_episodes
             self.best_model = copy.deepcopy(self.actor_dqn_network)
-            self.best_target_network = copy.deepcopy(self.q_target_network)
         
         return np.mean(returns), np.mean(lengths), solved/self.num_eval_episodes
