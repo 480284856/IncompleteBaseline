@@ -21,6 +21,8 @@ from IncompleteBaseline.algorithms.common.exploration_rate_calculation import St
 from IncompleteBaseline.algorithms.actordqn.actordqn_agent import ActorDQNAgent
 from IncompleteBaseline.envs.procedual_maze.env import Maze
 
+MODEL_SAVE_DIR = Path(__file__).resolve().parent / "models"
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse command-line options for a training run."""
     parser = argparse.ArgumentParser(
@@ -51,6 +53,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=None,
         help="TensorBoard output directory (default: an automatic run directory under runs/).",
     )
+    parser.add_argument("--model-save-dir", type=str, default=str(MODEL_SAVE_DIR), help="Directory for saved model parameters.")
     parser.add_argument("--batch-size", type=int, default=64, help="The size of data to sample in the replay buffer during each training")
     parser.add_argument("--learning-starts", type=int, default=2048)
     parser.add_argument("--replay-capacity", type=int, default=500_000)
@@ -88,6 +91,13 @@ class TensorObservation(gym.ObservationWrapper):
     def observation(self, observation):
         return torch.as_tensor(observation, dtype=torch.float32).reshape(1, -1)
 
+def save_model(model, filename: str, save_dir=MODEL_SAVE_DIR) -> Path:
+    # expanduser() converts the path to the user's home directory.
+    # For example, ~/models becomes /Users/jay/models
+    save_path = Path(save_dir).expanduser() / filename
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), save_path)
+    return save_path
 
 def create_environments(
     width: int, height: int, seed: int, logger,
@@ -161,6 +171,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         logger.info("TensorBoard logs: %s", agent.tensorboard_writer.log_dir)
         agent.train()
         agent.final_evaluation()
+        save_path = save_model(agent.best_target_network, "q_target_network_actordqn.pt", args.model_save_dir)
+        logger.info("Model parameters saved to: %s", save_path)
     finally:
         training_environment.close()
         evaluation_environment.close()

@@ -187,6 +187,7 @@ class DQNAgent:
         if evaluation and self.best_solved_rate < (solved/self.num_eval_episodes):
             self.best_solved_rate = solved/self.num_eval_episodes
             self.best_model = copy.deepcopy(self.qnetwork)
+            self.best_target_network = copy.deepcopy(self.q_target_network)
         
         return np.mean(returns), np.mean(lengths), solved/self.num_eval_episodes
 
