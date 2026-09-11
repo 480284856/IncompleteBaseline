@@ -38,7 +38,16 @@ class ActorDQNAgent(DQNAgent):
 
                  num_eval_episodes:int=100,
                  eval_freq:int|None=10_000,
-                 tensorboard_log_dir:str|None=None):
+                 tensorboard_log_dir:str|None=None,
+
+                 max_episode_steps_warmup:int|None=None,
+                 random_rollout_stategy:str|None=None,
+
+                 use_rheostat:bool=False,
+                 rheostat_m:float=0.1,
+                 rheostat_k:float=5.0,
+                 rheostat_b:float=-0.1,
+                 use_uni_replay_buffer:bool=False):
         '''
         Args:
             input_dim: The dimension of observation.
@@ -54,6 +63,19 @@ class ActorDQNAgent(DQNAgent):
             num_eval_episodes: Number of episodes to run per evaluation.
             eval_freq: Evaluate every N training environment steps, including before learning starts. None disables periodic evaluation.
             tensorboard_log_dir: TensorBoard output directory. None creates an automatic run directory under runs/.
+            max_episode_steps_warmup: Episode step limit while time_step < learning_start.
+                None keeps the environment's training limit. Requires an environment with
+                train_step_limitation; switching limits preserves the current episode's elapsed steps.
+            random_rollout_stategy: The exploration strategy used during the random sampling stage at the beginning of the training. 
+                "None" means uniformly choosing an action from the states.
+            use_rheostat: Use probabilistic replay admission during both warmup and training.
+                False uses the ordinary ReplayBuffer.
+            rheostat_m: Nonnegative decay rate for the exact duplicate count.
+            rheostat_k: Positive slope of the reward admission sigmoid.
+            rheostat_b: Offset of abs(reward) - abs(mean buffer reward) in the sigmoid.
+                Rheostat parameters are used only when use_rheostat is True.
+            use_uni_replay_buffer: Reject exact duplicate transitions during warmup and training.
+                Cannot be combined with use_rheostat.
         '''
         super().__init__(
             input_dim=input_dim,
@@ -78,7 +100,16 @@ class ActorDQNAgent(DQNAgent):
 
             num_eval_episodes=num_eval_episodes,
             eval_freq=eval_freq,
-            tensorboard_log_dir=tensorboard_log_dir
+            tensorboard_log_dir=tensorboard_log_dir,
+
+            max_episode_steps_warmup=max_episode_steps_warmup,
+            random_rollout_stategy=random_rollout_stategy,
+
+            use_rheostat=use_rheostat,
+            rheostat_m=rheostat_m,
+            rheostat_k=rheostat_k,
+            rheostat_b=rheostat_b,
+            use_uni_replay_buffer=use_uni_replay_buffer
         )
 
         self.actor_dqn_network = QNetwork(
@@ -96,6 +127,7 @@ class ActorDQNAgent(DQNAgent):
 
         self.best_solved_rate=0
         self.best_model = None
+        self.best_target_network = None
 
     def update_qnetwork(self,):
         if len(self.replaybuffer.pool) >= self.sample_batch_size:
@@ -140,7 +172,7 @@ class ActorDQNAgent(DQNAgent):
         action = self.action_selection(state=state, is_training=True)
         next_state, reward, terminated, truncated, info = self.training_env.step(action)
 
-        t = Transition(
+        t = self._transition_type(
             state,
             action,
             float(reward),
@@ -156,9 +188,18 @@ class ActorDQNAgent(DQNAgent):
         bar = tqdm(range(1,self.total_time_steps+1))
         training_step = 1
         solved_episode=0
+        training_limit = None
+        if self.max_episode_steps_warmup is not None:
+            training_limit = self.training_env.unwrapped.train_step_limitation
         try:
             state, _ = self._reset_env(self.training_env, options={"is_evaluation": False})
             for time_step in bar:
+                if self.max_episode_steps_warmup is not None:
+                    self.training_env.unwrapped.train_step_limitation = (
+                        self.max_episode_steps_warmup
+                        if time_step < self.learning_start
+                        else training_limit
+                    )
                 state_key = tuple(state.detach().cpu().reshape(-1).tolist())
                 self.transition_counter.add(state_key)
                 self.tensorboard_writer.add_scalar(
@@ -202,6 +243,8 @@ class ActorDQNAgent(DQNAgent):
         # The finally block ensures the writer saves buffered logs and closes the progress bar 
         # when training finishes, raises an error, or is interrupted with Ctrl+C
         finally:
+            if self.max_episode_steps_warmup is not None:
+                self.training_env.unwrapped.train_step_limitation = training_limit
             self.tensorboard_writer.close()
             bar.close()
 
@@ -290,5 +333,6 @@ class ActorDQNAgent(DQNAgent):
         if evaluation and self.best_solved_rate < (solved/self.num_eval_episodes):
             self.best_solved_rate = solved/self.num_eval_episodes
             self.best_model = copy.deepcopy(self.actor_dqn_network)
+            self.best_target_network = copy.deepcopy(self.q_target_network)
         
         return np.mean(returns), np.mean(lengths), solved/self.num_eval_episodes
