@@ -17,9 +17,9 @@ import torch
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from IncompleteBaseline.algorithms.common.exploration_rate_calculation import ClassicalExploration,StepDecay
-from IncompleteBaseline.algorithms.dqn.dqn_agent import DQNAgent
-from IncompleteBaseline.envs.procedual_maze.env import Maze
+from ..algorithms.common.exploration_rate_calculation import ClassicalExploration,StepDecay
+from ..algorithms.dqn.dqn_agent import DQNAgent
+from ..envs.procedual_maze.env import Maze
 
 MODEL_SAVE_DIR = Path(__file__).resolve().parent / "models"
 
@@ -31,29 +31,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=4)
     parser.add_argument("--height", type=int, default=4)
     parser.add_argument("--total-time-steps", type=int, default=20_000_000, help="The total time to call env.step(action)")
-    parser.add_argument("--max-episode-steps", 
-                        type=int, default=10_000, 
+    parser.add_argument("--max-episode-steps", type=int, default=10_000, 
                         help="The maximum step to work on an episode in training. " \
                         "The episode will be truncated if the step limit used is larger than this parameter.")
-    parser.add_argument("--max-episode-steps-eval", 
-                        type=int, 
-                        default=16, 
+    parser.add_argument("--max-episode-steps-warmup",type=int,default=None,
+        help="Episode step limit before learning starts (default: --max-episode-steps).",
+    )
+    parser.add_argument("--max-episode-steps-eval", type=int, default=16, 
                         help="The maximum step to work on an episode in evaluation. " \
                             "The episode will be truncated if the step limit used is larger than this parameter.")
     parser.add_argument("--evaluation-episodes", type=int, default=100, help="The number of episodes used to evaluate.")
-    parser.add_argument(
-        "--evaluation-frequency",
-        type=int,
-        default=10_000,
-        help="Evaluate every N training environment steps; 0 disables periodic evaluation.",
-    )
-    parser.add_argument(
-        "--tensorboard-log-dir", "--tensorboard_log_dir",
-        type=str,
-        default=None,
-        help="TensorBoard output directory (default: an automatic run directory under runs/).",
-    )
-    parser.add_argument("--model-save-dir", type=str, default=str(MODEL_SAVE_DIR), help="Directory for saved model parameters.")
+    parser.add_argument("--evaluation-frequency",type=int,default=10_000,
+                        help="Evaluate every N training environment steps; 0 disables periodic evaluation.")
+    parser.add_argument("--tensorboard-log-dir",type=str,default=None,
+                        help="TensorBoard output directory (default: an automatic run directory under runs/).",)
     parser.add_argument("--batch-size", type=int, default=64, help="The size of data to sample in the replay buffer during each training")
     parser.add_argument("--learning-starts", type=int, default=2048)
     parser.add_argument("--replay-capacity", type=int, default=500_000)
@@ -63,15 +54,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--epsilon-decay", type=float, default=200_000)
     parser.add_argument("--training-freq", type=int, default=1)
     parser.add_argument("--grad-step-per-train", type=int, default=1)
-    parser.add_argument(
-        "--tau",
-        type=float,
-        default=0.005,
-        help="Fraction of online-network weights mixed into the target per update.",
-    )
+    parser.add_argument("--tau",type=float,default=0.005,help="Fraction of online-network weights mixed into the target per update.",)
     parser.add_argument("--seed", type=int, default=42)
+
     parser.add_argument("--epsilon-strategy", type=str, choices=["StepDecay", "91Epsilon"], default="91Epsilon")
+    parser.add_argument("--epsilon-exploration-strategy", 
+                        type=str, choices=["MABRollout"], default=None,
+                        help="What kinds of strategy are used for Epsilon-greedy when exploration is chosen? ('None' means using a classical random choice.)")
+    parser.add_argument("--random-rollout-stategy", type=str, choices=["MABRollout"], default=None,
+                        help="The exploration strategy used during the random sampling stage at the beginning of the training." \
+                        "'None' means uniformly choosing an action from the states.")
+
     args = parser.parse_args(argv)
+    if args.max_episode_steps_warmup is not None and args.max_episode_steps_warmup < 1:
+        parser.error("--max-episode-steps-warmup must be a positive integer")
 
     print("Arguments:")
     for key, value in vars(args).items():
@@ -81,7 +77,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 class TensorObservation(gym.ObservationWrapper):
-    """Provide the baseline's single-environment float32 tensor input."""
+    """
+    A wrapper that will post-process observation after calling env.reset or env.step by calling self.observation.
+    """
 
     def __init__(self, env: Maze):
         super().__init__(env)
@@ -167,11 +165,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             tau=args.tau,
             total_time_steps=args.total_time_steps,
             learning_start=args.learning_starts,
+            max_episode_steps_warmup=args.max_episode_steps_warmup,
             training_freq=args.training_freq,
             grad_step_per_train=args.grad_step_per_train,
             num_eval_episodes=args.evaluation_episodes,
             eval_freq=args.evaluation_frequency or None,
             tensorboard_log_dir=args.tensorboard_log_dir,
+            eps_exp_strategy=args.epsilon_exploration_strategy,
+            random_rollout_stategy=args.random_rollout_stategy,
         )
         logger.info(
             "Training DQN on %sx%s mazes for %s timesteps using CPU.",

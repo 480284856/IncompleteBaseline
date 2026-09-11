@@ -6,9 +6,9 @@ import gymnasium as gym
 from torch.utils.tensorboard import SummaryWriter
 from typing import Tuple
 from ..common.exploration_rate_calculation import ClassicalExploration
-from ..common.replay_buffer import ReplayBuffer, Transition, TransitionBatch
+from ..common.replay_buffer.replay_buffer import ReplayBuffer, Transition, TransitionBatch
 from ..common.qnetwork import QNetwork
-
+from ..common.rollout import MABRollout
 from tqdm import tqdm
 
 class DQNAgent:
@@ -36,7 +36,11 @@ class DQNAgent:
 
                  num_eval_episodes:int=100,
                  eval_freq:int|None=10_000,
-                 tensorboard_log_dir:str|None=None):
+                 tensorboard_log_dir:str|None=None,
+
+                 max_episode_steps_warmup:int|None=None,
+                 random_rollout_stategy:str|None=None,
+                 eps_exp_strategy:str|None=None):
         '''
         Args:
             input_dim: The dimension of observation.
@@ -52,6 +56,13 @@ class DQNAgent:
             num_eval_episodes: Number of episodes to run per evaluation.
             eval_freq: Evaluate every N training environment steps, including before learning starts. None disables periodic evaluation.
             tensorboard_log_dir: TensorBoard output directory. None creates an automatic run directory under runs/.
+            max_episode_steps_warmup: Episode step limit while time_step < learning_start.
+                None keeps the environment's training limit. Requires an environment with
+                train_step_limitation; switching limits preserves the current episode's elapsed steps.
+            random_rollout_stategy: The exploration strategy used during the random sampling stage at the beginning of the training. 
+                "None" means uniformly choosing an action from the states.
+            eps_exp_strategy: What kinds of strategy are used for Epsilon-greedy when exploration is chosen? 
+                "None" means using a classical random choice.
         '''
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -85,6 +96,33 @@ class DQNAgent:
         self.num_eval_episodes=num_eval_episodes
         self.eval_freq=eval_freq
 
+        self.max_episode_steps_warmup=max_episode_steps_warmup
+
+        assert random_rollout_stategy in ["MABRollout", None]
+        if random_rollout_stategy == "MABRollout":
+            self.rollout_warmup = MABRollout(self.training_env,seed=seed)
+        else:
+            if random_rollout_stategy == None:
+                self.rollout_warmup = None
+
+        assert eps_exp_strategy in ["MABRollout", None]
+        if eps_exp_strategy == "MABRollout":
+            self.eps_exp_strategy = (MABRollout(self.training_env,seed=seed)
+                                     if not self.rollout_warmup
+                                     else self.rollout_warmup
+            )
+        else:
+            if eps_exp_strategy==None:
+                self.eps_exp_strategy=eps_exp_strategy
+
+        if self.max_episode_steps_warmup is not None:
+            if (isinstance(self.max_episode_steps_warmup, bool)
+                    or not isinstance(self.max_episode_steps_warmup, int)
+                    or self.max_episode_steps_warmup < 1):
+                raise ValueError("max_episode_steps_warmup must be a positive integer or None.")
+            if not hasattr(self.training_env.unwrapped, "train_step_limitation"):
+                raise ValueError("The warmup limit requires an environment with train_step_limitation.")
+
         if self.eval_freq is not None:
             if isinstance(self.eval_freq, bool) or not isinstance(self.eval_freq, int) or self.eval_freq < 1:
                 raise ValueError("eval_freq must be a positive integer or None.")
@@ -109,9 +147,18 @@ class DQNAgent:
         bar = tqdm(range(1,self.total_time_steps+1))
         training_step = 1
         solved_episode=0
+        training_limit = None
+        if self.max_episode_steps_warmup is not None:
+            training_limit = self.training_env.unwrapped.train_step_limitation
         try:
             state, _ = self._reset_env(self.training_env, options={"is_evaluation": False})
             for time_step in bar:
+                if self.max_episode_steps_warmup is not None:
+                    self.training_env.unwrapped.train_step_limitation = (
+                        self.max_episode_steps_warmup
+                        if time_step < self.learning_start
+                        else training_limit
+                    )
                 state_key = tuple(state.detach().cpu().reshape(-1).tolist())
                 self.transition_counter.add(state_key)
                 self.tensorboard_writer.add_scalar(
@@ -154,6 +201,8 @@ class DQNAgent:
         # The finally block ensures the writer saves buffered logs and closes the progress bar 
         # when training finishes, raises an error, or is interrupted with Ctrl+C
         finally:
+            if self.max_episode_steps_warmup is not None:
+                self.training_env.unwrapped.train_step_limitation = training_limit
             self.tensorboard_writer.close()
             bar.close()
 
@@ -167,7 +216,7 @@ class DQNAgent:
             rewards = 0.0
             length = 0
             while True:
-                action = self.action_selection(state=state, pure_greedy=True)
+                action = self.get_policy(state=state)
                 next_state, reward, terminated, truncated, info = env.step(action)
 
                 rewards += float(reward)
@@ -191,26 +240,27 @@ class DQNAgent:
         
         return np.mean(returns), np.mean(lengths), solved/self.num_eval_episodes
 
-    def action_selection(self, state:torch.Tensor, current_time_step:int|None=None, pure_greedy:bool=False) -> int:
-        assert state.shape == (1,self.input_dim), "Current implementation is only for single environment, not for vectorized environment."
-
-        if pure_greedy:
-            with torch.no_grad():
+    def get_policy(self, state:torch.Tensor) -> int:
+        with torch.no_grad():
                 return self.qnetwork(state).argmax().item()
-        else:
-            exploration_rate = self.epsilon_strategy.step(current_time_step)
-            if self._rng.random() < exploration_rate:
-                return self._rng.choice(range(0,self.output_dim))
-            else:
-                with torch.no_grad():
-                    return self.qnetwork(state).argmax().item()
-
+        
     def rollout(self, current_time_step:int, state:torch.Tensor):
         assert isinstance(state, torch.Tensor)
         assert state.shape == (1,self.input_dim), f"Expect shape of (1,{self.input_dim}), got {state.shape}"
+        assert state.shape == (1,self.input_dim), "Current implementation is only for single environment, not for vectorized environment."
         
-        action = self.action_selection(state=state, current_time_step=current_time_step)
-        next_state, reward, terminated, truncated, info = self.training_env.step(action)
+        exploration_rate = self.epsilon_strategy.step(current_time_step)
+        if self._rng.random() < exploration_rate:
+            if isinstance(self.eps_exp_strategy, MABRollout):
+                action, next_state, reward, terminated, truncated, info = self.eps_exp_strategy.step(state=state)
+            else:
+                if self.eps_exp_strategy==None: # classical epsilon-greedy
+                    action = self._rng.choice(range(0, self.output_dim))
+                    next_state, reward, terminated, truncated, info = self.training_env.step(action)
+        else:
+            with torch.no_grad():
+                action = self.qnetwork(state).argmax().item()
+                next_state, reward, terminated, truncated, info = self.training_env.step(action)
 
         t = Transition(
             state,
@@ -228,8 +278,12 @@ class DQNAgent:
         assert isinstance(state, torch.Tensor)
         assert state.shape == (1,self.input_dim), f"Expect shape of (1,{self.input_dim}), got {state.shape}"
 
-        action = self._rng.choice(range(0,self.output_dim))
-        next_state, reward, terminated, truncated, info = self.training_env.step(action)
+        if isinstance(self.rollout_warmup, MABRollout):
+            action, next_state, reward, terminated, truncated, info = self.rollout_warmup.step(state=state)
+        else:
+            if self.rollout_warmup == None:
+                action = self._rng.choice(range(0, self.output_dim))
+                next_state, reward, terminated, truncated, info = self.training_env.step(action)
 
         t = Transition(
             state,
@@ -311,7 +365,7 @@ class DQNAgent:
                     rewards = 0.0
                     length = 0
                     while True:
-                        action = self.action_selection(state=state, pure_greedy=True)
+                        action = self.get_policy(state=state)
                         state, reward, terminated, truncated, _ = env.step(action)
                         rewards += float(reward)
                         length += 1
