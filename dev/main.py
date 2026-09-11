@@ -65,6 +65,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         help="The exploration strategy used during the random sampling stage at the beginning of the training." \
                         "'None' means uniformly choosing an action from the states.")
 
+    replay_options = parser.add_mutually_exclusive_group()
+    replay_options.add_argument("--use-uni-replay-buffer", action="store_true",
+                        help="Reject exact duplicate transitions during warmup and training.")
+    replay_options.add_argument("--use-rheostat", action="store_true",
+                        help="Use Rheostat replay admission during warmup and training.")
+    parser.add_argument("--rheostat-m", type=float, default=0.5,
+                        help="Rheostat duplicate-count decay rate (nonnegative).")
+    parser.add_argument("--rheostat-k", type=float, default=5.0,
+                        help="Rheostat reward sigmoid slope (positive).")
+    parser.add_argument("--rheostat-b", type=float, default=-0.1,
+                        help="Rheostat reward sigmoid offset.")
+
     args = parser.parse_args(argv)
     if args.max_episode_steps_warmup is not None and args.max_episode_steps_warmup < 1:
         parser.error("--max-episode-steps-warmup must be a positive integer")
@@ -173,6 +185,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             tensorboard_log_dir=args.tensorboard_log_dir,
             eps_exp_strategy=args.epsilon_exploration_strategy,
             random_rollout_stategy=args.random_rollout_stategy,
+            use_rheostat=args.use_rheostat,
+            use_uni_replay_buffer=args.use_uni_replay_buffer,
+            rheostat_m=args.rheostat_m,
+            rheostat_k=args.rheostat_k,
+            rheostat_b=args.rheostat_b,
         )
         logger.info(
             "Training DQN on %sx%s mazes for %s timesteps using CPU.",
@@ -181,8 +198,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         logger.info("TensorBoard logs: %s", agent.tensorboard_writer.log_dir)
         agent.train()
         agent.final_evaluation()
-        save_path = save_model(agent.best_target_network, "q_target_network_dqn.pt", args.model_save_dir)
-        logger.info("Model parameters saved to: %s", save_path)
     finally:
         training_environment.close()
         evaluation_environment.close()

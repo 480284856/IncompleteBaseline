@@ -1,5 +1,5 @@
 python -m IncompleteBaseline.dev.main \
-    --tensorboard-log-dir "IncompleteBaseline/dev/logs/qdn/maze5x5/v1" \
+    --tensorboard-log-dir "IncompleteBaseline/dev/logs/qdn/maze5x5/normal/v1" \
     --width 5 \
     --height 5 \
     --max-episode-steps-eval 25 \
@@ -9,7 +9,7 @@ python -m IncompleteBaseline.dev.main \
     --epsilon-strategy "91Epsilon" \
     --seed 42
 python -m IncompleteBaseline.dev.main \
-    --tensorboard-log-dir "IncompleteBaseline/dev/logs/qdn/maze5x5/v2" \
+    --tensorboard-log-dir "IncompleteBaseline/dev/logs/qdn/maze5x5/normal/v2" \
     --width 5 \
     --height 5 \
     --max-episode-steps-eval 25 \
@@ -17,9 +17,9 @@ python -m IncompleteBaseline.dev.main \
     --total-time-steps 1228800 \
     --learning-starts 819200 \
     --epsilon-strategy "91Epsilon" \
-    --seed 42
+    --seed 43
 python -m IncompleteBaseline.dev.main \
-    --tensorboard-log-dir "IncompleteBaseline/dev/logs/qdn/maze5x5/v3" \
+    --tensorboard-log-dir "IncompleteBaseline/dev/logs/qdn/maze5x5/normal/v3" \
     --width 5 \
     --height 5 \
     --max-episode-steps-eval 25 \
@@ -27,4 +27,4 @@ python -m IncompleteBaseline.dev.main \
     --total-time-steps 1228800 \
     --learning-starts 819200 \
     --epsilon-strategy "91Epsilon" \
-    --seed 42
+    --seed 44

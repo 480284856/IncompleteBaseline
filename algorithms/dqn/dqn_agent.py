@@ -7,6 +7,10 @@ from torch.utils.tensorboard import SummaryWriter
 from typing import Tuple
 from ..common.exploration_rate_calculation import ClassicalExploration
 from ..common.replay_buffer.replay_buffer import ReplayBuffer, Transition, TransitionBatch
+from ..common.replay_buffer.rheostat import Rheostat
+from ..common.replay_buffer.uni_replay_buffer import (
+    UniReplayBuffer, Transition as UniTransition, TransitionBatch as UniTransitionBatch,
+)
 from ..common.qnetwork import QNetwork
 from ..common.rollout import MABRollout
 from tqdm import tqdm
@@ -40,7 +44,13 @@ class DQNAgent:
 
                  max_episode_steps_warmup:int|None=None,
                  random_rollout_stategy:str|None=None,
-                 eps_exp_strategy:str|None=None):
+                 eps_exp_strategy:str|None=None,
+
+                 use_rheostat:bool=False,
+                 rheostat_m:float=0.1,
+                 rheostat_k:float=5.0,
+                 rheostat_b:float=-0.1,
+                 use_uni_replay_buffer:bool=False):
         '''
         Args:
             input_dim: The dimension of observation.
@@ -63,7 +73,17 @@ class DQNAgent:
                 "None" means uniformly choosing an action from the states.
             eps_exp_strategy: What kinds of strategy are used for Epsilon-greedy when exploration is chosen? 
                 "None" means using a classical random choice.
+            use_rheostat: Use probabilistic replay admission during both warmup and training.
+                False uses the ordinary ReplayBuffer.
+            rheostat_m: Nonnegative decay rate for the exact duplicate count.
+            rheostat_k: Positive slope of the reward admission sigmoid.
+            rheostat_b: Offset of abs(reward) - abs(mean buffer reward) in the sigmoid.
+                Rheostat parameters are used only when use_rheostat is True.
+            use_uni_replay_buffer: Reject exact duplicate transitions during warmup and training.
+                Cannot be combined with use_rheostat.
         '''
+        if use_rheostat and use_uni_replay_buffer:
+            raise ValueError("Choose either Rheostat or UniReplayBuffer, not both.")
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.seed = seed
@@ -77,7 +97,18 @@ class DQNAgent:
 
         self.epsilon_strategy = epsilon_strategy
 
-        self.replaybuffer = ReplayBuffer(buffer_size=replay_buffer_size, seed=self.seed, input_dim=self.input_dim)
+        self._transition_type = UniTransition if use_uni_replay_buffer else Transition
+        if use_uni_replay_buffer:
+            self.replaybuffer = UniReplayBuffer(
+                buffer_size=replay_buffer_size, seed=self.seed, input_dim=self.input_dim,
+            )
+        elif use_rheostat:
+            self.replaybuffer = Rheostat(
+                buffer_size=replay_buffer_size, seed=self.seed, input_dim=self.input_dim,
+                m=rheostat_m, k=rheostat_k, b=rheostat_b,
+            )
+        else:
+            self.replaybuffer = ReplayBuffer(buffer_size=replay_buffer_size, seed=self.seed, input_dim=self.input_dim)
         self.training_env = training_env
         self.eval_env = eval_env
         self.sample_batch_size=sample_batch_size
@@ -262,7 +293,7 @@ class DQNAgent:
                 action = self.qnetwork(state).argmax().item()
                 next_state, reward, terminated, truncated, info = self.training_env.step(action)
 
-        t = Transition(
+        t = self._transition_type(
             state,
             action,
             float(reward),
@@ -285,7 +316,7 @@ class DQNAgent:
                 action = self._rng.choice(range(0, self.output_dim))
                 next_state, reward, terminated, truncated, info = self.training_env.step(action)
 
-        t = Transition(
+        t = self._transition_type(
             state,
             action,
             float(reward),
@@ -313,8 +344,8 @@ class DQNAgent:
         return None
         
 
-    def _td_target(self, transitions:TransitionBatch):
-        if not isinstance(transitions, TransitionBatch):
+    def _td_target(self, transitions:TransitionBatch|UniTransitionBatch):
+        if not isinstance(transitions, (TransitionBatch, UniTransitionBatch)):
             raise TypeError()
         assert transitions.states.shape == (self.sample_batch_size, self.input_dim) , "the shape of state should be [bs, self.input_dim]"
         assert transitions.actions.shape == (self.sample_batch_size, 1) , "the shape of actions should be [bs, 1]"
