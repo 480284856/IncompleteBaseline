@@ -3,13 +3,17 @@ import copy
 import random
 import numpy as np
 import gymnasium as gym
+from collections.abc import Sequence
 from torch.utils.tensorboard import SummaryWriter
 from typing import Tuple
 from ..common.exploration_rate_calculation import ClassicalExploration
 from ..common.replay_buffer.replay_buffer import ReplayBuffer, Transition, TransitionBatch
 from ..common.replay_buffer.rheostat import Rheostat
 from ..common.replay_buffer.uni_replay_buffer import (
-    UniReplayBuffer, Transition as UniTransition, TransitionBatch as UniTransitionBatch,
+    UniReplayBuffer,
+    ContinuousUniReplayBuffer,
+    Transition as UniTransition,
+    TransitionBatch as UniTransitionBatch,
 )
 from ..common.qnetwork import QNetwork
 from ..common.rollout import MABRollout
@@ -50,7 +54,13 @@ class DQNAgent:
                  rheostat_m:float=0.1,
                  rheostat_k:float=5.0,
                  rheostat_b:float=-0.1,
-                 use_uni_replay_buffer:bool=False):
+
+                 use_uni_replay_buffer:bool=False,
+                 use_continuous_uni_replay_buffer:bool=False,
+                 continuous_uni_tolerance:float=1e-3,
+                 continuous_uni_reward_tolerance:float=1e-2,
+
+                 hidden_sizes:Sequence[int]|None=None):
         '''
         Args:
             input_dim: The dimension of observation.
@@ -73,52 +83,76 @@ class DQNAgent:
                 "None" means uniformly choosing an action from the states.
             eps_exp_strategy: What kinds of strategy are used for Epsilon-greedy when exploration is chosen? 
                 "None" means using a classical random choice.
+            
             use_rheostat: Use probabilistic replay admission during both warmup and training.
                 False uses the ordinary ReplayBuffer.
             rheostat_m: Nonnegative decay rate for the exact duplicate count.
             rheostat_k: Positive slope of the reward admission sigmoid.
             rheostat_b: Offset of abs(reward) - abs(mean buffer reward) in the sigmoid.
                 Rheostat parameters are used only when use_rheostat is True.
+            
             use_uni_replay_buffer: Reject exact duplicate transitions during warmup and training.
-                Cannot be combined with use_rheostat.
+            
+            use_continuous_uni_replay_buffer: Reject a transition when a stored one matches it
+                on action, reward, state and next state. Intended for real-valued observations,
+                where exact duplicates are essentially never seen. Cannot be combined with
+                use_uni_replay_buffer or use_rheostat.
+            continuous_uni_tolerance: Maximum Euclidean distance between two states, and between
+                two next states, for them to count as the same, in the observation's own units.
+                Used only when use_continuous_uni_replay_buffer is True. Choose it relative to
+                the observation scale.
+            continuous_uni_reward_tolerance: Maximum absolute reward difference for two rewards
+                to count as the same, in the environment's reward units. Used only when
+                use_continuous_uni_replay_buffer is True.
+            
+            hidden_sizes: Width of each Q-network hidden layer. None keeps QNetwork's default
+                architecture, so existing runs are unaffected. At most one replay admission
+                mode may be enabled.
         '''
-        if use_rheostat and use_uni_replay_buffer:
-            raise ValueError("Choose either Rheostat or UniReplayBuffer, not both.")
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.seed = seed
+        assert total_time_steps>=1
+        assert learning_start>=1 and learning_start<total_time_steps
+        assert training_freq>=1 and training_freq<total_time_steps
+        assert grad_step_per_train>=1
+        # To prevent the network from failing to update even when the buffer is full.
+        assert 1 <= sample_batch_size <= replay_buffer_size
+        assert num_eval_episodes>=1
 
-        self.qnetwork = QNetwork(observation_dimensions=input_dim, number_of_actions=output_dim)
-        self.q_target_network = QNetwork(observation_dimensions=input_dim, number_of_actions=output_dim)
-        self.q_target_network.load_state_dict(self.qnetwork.state_dict())
-        self.q_target_network.requires_grad_(False)
+        if max_episode_steps_warmup is not None:
+            if (isinstance(max_episode_steps_warmup, bool)
+                    or not isinstance(max_episode_steps_warmup, int)
+                    or max_episode_steps_warmup < 1):
+                raise ValueError("max_episode_steps_warmup must be a positive integer or None.")
+            if not hasattr(training_env.unwrapped, "train_step_limitation"):
+                raise ValueError("The warmup limit requires an environment with train_step_limitation.")
+        if eval_freq is not None:
+            if isinstance(eval_freq, bool) or not isinstance(eval_freq, int) or eval_freq < 1:
+                raise ValueError("eval_freq must be a positive integer or None.")
+            if eval_env is training_env:
+                raise ValueError("Periodic evaluation requires a separate evaluation environment.")
 
-        self._rng = random.Random(self.seed)
-
-        self.epsilon_strategy = epsilon_strategy
-
-        self._transition_type = UniTransition if use_uni_replay_buffer else Transition
-        if use_uni_replay_buffer:
-            self.replaybuffer = UniReplayBuffer(
-                buffer_size=replay_buffer_size, seed=self.seed, input_dim=self.input_dim,
-            )
-        elif use_rheostat:
-            self.replaybuffer = Rheostat(
-                buffer_size=replay_buffer_size, seed=self.seed, input_dim=self.input_dim,
-                m=rheostat_m, k=rheostat_k, b=rheostat_b,
-            )
-        else:
-            self.replaybuffer = ReplayBuffer(buffer_size=replay_buffer_size, seed=self.seed, input_dim=self.input_dim)
+        # Model
         self.training_env = training_env
         self.eval_env = eval_env
         self.sample_batch_size=sample_batch_size
 
+        self.gamma = gamma
+        self.tau = tau
+
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.seed = seed
+        self.hidden_sizes = None if hidden_sizes is None else tuple(hidden_sizes)
+        self.qnetwork = QNetwork(observation_dimensions=input_dim, number_of_actions=output_dim,
+                                 hidden_sizes=self.hidden_sizes)
+        self.q_target_network = QNetwork(observation_dimensions=input_dim, number_of_actions=output_dim,
+                                         hidden_sizes=self.hidden_sizes)
+        self.q_target_network.load_state_dict(self.qnetwork.state_dict())
+        self.q_target_network.requires_grad_(False)
         self.loss_fn=loss_fn
         self.optim = torch.optim.Adam(self.qnetwork.parameters())
 
-        self.gamma = gamma
-
-        self.tau = tau
+        # Training & Evaluation
+        self._rng = random.Random(self.seed)
 
         self.total_time_steps=total_time_steps
         self.learning_start=learning_start
@@ -126,53 +160,77 @@ class DQNAgent:
         self.grad_step_per_train=grad_step_per_train
         self.num_eval_episodes=num_eval_episodes
         self.eval_freq=eval_freq
-
         self.max_episode_steps_warmup=max_episode_steps_warmup
-
-        assert random_rollout_stategy in ["MABRollout", None]
-        if random_rollout_stategy == "MABRollout":
-            self.rollout_warmup = MABRollout(self.training_env,seed=seed)
-        else:
-            if random_rollout_stategy == None:
-                self.rollout_warmup = None
-
-        assert eps_exp_strategy in ["MABRollout", None]
-        if eps_exp_strategy == "MABRollout":
-            self.eps_exp_strategy = (MABRollout(self.training_env,seed=seed)
-                                     if not self.rollout_warmup
-                                     else self.rollout_warmup
-            )
-        else:
-            if eps_exp_strategy==None:
-                self.eps_exp_strategy=eps_exp_strategy
-
-        if self.max_episode_steps_warmup is not None:
-            if (isinstance(self.max_episode_steps_warmup, bool)
-                    or not isinstance(self.max_episode_steps_warmup, int)
-                    or self.max_episode_steps_warmup < 1):
-                raise ValueError("max_episode_steps_warmup must be a positive integer or None.")
-            if not hasattr(self.training_env.unwrapped, "train_step_limitation"):
-                raise ValueError("The warmup limit requires an environment with train_step_limitation.")
-
-        if self.eval_freq is not None:
-            if isinstance(self.eval_freq, bool) or not isinstance(self.eval_freq, int) or self.eval_freq < 1:
-                raise ValueError("eval_freq must be a positive integer or None.")
-            if self.eval_env is self.training_env:
-                raise ValueError("Periodic evaluation requires a separate evaluation environment.")
-
-        assert self.total_time_steps>=1
-        assert self.learning_start>=1 and self.learning_start<self.total_time_steps
-        assert self.training_freq>=1 and self.training_freq<self.total_time_steps
-        assert self.grad_step_per_train>=1
-        # To prevent the network from failing to update even when the buffer is full.
-        assert 1 <= self.sample_batch_size <= replay_buffer_size
-        assert self.num_eval_episodes>=1
 
         self.tensorboard_writer = SummaryWriter(log_dir=tensorboard_log_dir)
         self.transition_counter=set()
 
         self.best_solved_rate=0
         self.best_model = None
+
+        # Replay buffer
+        replay_modes = [
+            name for name, enabled in (
+                ("use_rheostat", use_rheostat),
+                ("use_uni_replay_buffer", use_uni_replay_buffer),
+                ("use_continuous_uni_replay_buffer", use_continuous_uni_replay_buffer),
+            ) if enabled
+        ]
+        if len(replay_modes) > 1:
+            raise ValueError(
+                "Choose at most one replay admission mode, not several at once: "
+                + ", ".join(replay_modes) + "."
+            )
+        else:
+            # Both unique-replay buffers store the uni_replay_buffer Transition, so the
+            # rollout helpers must build that type rather than the plain replay_buffer one.
+            self._transition_type = (
+                UniTransition
+                if (use_uni_replay_buffer or use_continuous_uni_replay_buffer)
+                else Transition
+            )
+            self.use_continuous_uni_replay_buffer = bool(use_continuous_uni_replay_buffer)
+            self.continuous_uni_tolerance = continuous_uni_tolerance
+            self.continuous_uni_reward_tolerance = continuous_uni_reward_tolerance
+            if use_continuous_uni_replay_buffer:
+                self.replaybuffer = ContinuousUniReplayBuffer(
+                    buffer_size=replay_buffer_size, seed=self.seed, input_dim=self.input_dim,
+                    tolerance=continuous_uni_tolerance,
+                    reward_tolerance=continuous_uni_reward_tolerance,
+                )
+            elif use_uni_replay_buffer:
+                self.replaybuffer = UniReplayBuffer(
+                    buffer_size=replay_buffer_size, seed=self.seed, input_dim=self.input_dim,
+                )
+            elif use_rheostat:
+                self.replaybuffer = Rheostat(
+                    buffer_size=replay_buffer_size, seed=self.seed, input_dim=self.input_dim,
+                    m=rheostat_m, k=rheostat_k, b=rheostat_b,
+                )
+            else:
+                self.replaybuffer = ReplayBuffer(buffer_size=replay_buffer_size, seed=self.seed, input_dim=self.input_dim)
+
+        # random rollout stategy
+        if random_rollout_stategy is not None:
+            assert random_rollout_stategy in ["MABRollout",]
+            if random_rollout_stategy == "MABRollout":
+                self.rollout_warmup = MABRollout(self.training_env,seed=seed)
+        else:
+            self.rollout_warmup = None
+
+        # epsilon strategy
+        self.epsilon_strategy = epsilon_strategy
+
+        # the strategy for exploration in episilon-greedy
+        if eps_exp_strategy is not None:
+            assert eps_exp_strategy in ["MABRollout", ]
+            if eps_exp_strategy == "MABRollout":
+                self.eps_exp_strategy = (MABRollout(self.training_env,seed=seed)
+                                        if not self.rollout_warmup
+                                        else self.rollout_warmup
+                )
+        else:
+            self.eps_exp_strategy=None
 
     def train(self,):
         bar = tqdm(range(1,self.total_time_steps+1))
@@ -343,7 +401,6 @@ class DQNAgent:
             return loss.item()
         return None
         
-
     def _td_target(self, transitions:TransitionBatch|UniTransitionBatch):
         if not isinstance(transitions, (TransitionBatch, UniTransitionBatch)):
             raise TypeError()
