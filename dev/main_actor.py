@@ -78,10 +78,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         help="The exploration strategy used during the random sampling stage at the beginning of the training." \
                         "'None' means uniformly choosing an action from the states.")
 
-    replay_options = parser.add_mutually_exclusive_group()
-    replay_options.add_argument("--use-uni-replay-buffer", action="store_true",
+    parser.add_argument("--use-uni-replay-buffer", action="store_true",
                         help="Reject exact duplicate transitions during warmup and training.")
-    replay_options.add_argument("--use-rheostat", action="store_true",
+    parser.add_argument("--use-rheostat", action="store_true",
                         help="Use Rheostat replay admission during warmup and training.")
     parser.add_argument("--rheostat-m", type=float, default=0.5,
                         help="Rheostat duplicate-count decay rate (nonnegative).")
