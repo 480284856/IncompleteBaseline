@@ -182,35 +182,39 @@ class ContinuousUniReplayBuffer(UniReplayBuffer):
 
     ``UniReplayBuffer`` deduplicates by exact equality, which almost never
     happens once observations are real-valued. This buffer instead treats a
-    candidate transition as a duplicate when an already stored transition has
-    the same action and a sufficiently close state:
+    candidate transition as a duplicate when an already stored transition
+    matches it on state, action, reward and next state:
 
         action(candidate) == action(stored)
         and ||state(candidate) - state(stored)||_2 <= tolerance
+        and ||next_state(candidate) - next_state(stored)||_2 <= tolerance
+        and |reward(candidate) - reward(stored)| <= reward_tolerance
 
-    ``next_state``, ``reward``, ``terminated`` and ``truncated`` deliberately do
-    not take part in the comparison: the goal is to stop writing the same
-    (state, action) experience over and over, not to deduplicate whole outcomes.
-    With ``tolerance=0`` a transition is rejected only when its state is
-    numerically identical to a stored state and the action matches.
+    ``terminated`` and ``truncated`` take no part: for a numerical reward the
+    outcome is already carried by ``reward`` and ``next_state``.
 
-    The stored states are mirrored into a preallocated matrix, so the similarity
-    test costs one matrix-vector product instead of a Python-level scan. A push
-    is therefore O(len(self) * input_dim) rather than the O(1) exact-set lookup
-    of ``UniReplayBuffer``; pick ``tolerance`` and ``buffer_size`` accordingly.
+    The stored states are mirrored into preallocated matrices, so the similarity
+    test costs two matrix-vector products instead of a Python-level scan. The
+    cheap exact comparisons (action, reward) run first and the distance tests
+    only on the surviving rows, so a push usually costs far less than a full
+    scan; the worst case is O(len(self) * input_dim). Pick ``tolerance``,
+    ``reward_tolerance`` and ``buffer_size`` accordingly.
 
     Args:
         buffer_size: Maximum number of stored transitions.
         seed: Seed of the sampling RNG. Kept for interface compatibility.
         input_dim: Dimension of the flattened observation. Used for safety
             checking and to size the state index.
-        tolerance: Maximum Euclidean distance between two states for them to be
-            treated as the same state. Must be finite and nonnegative. It should
-            be chosen relative to the scale of the observation and kept well
-            above float32 rounding error.
+        tolerance: Maximum Euclidean distance between two states, and between
+            two next states, for them to count as the same. Must be finite and
+            nonnegative. It should be chosen relative to the scale of the
+            observation and kept well above float32 rounding error.
+        reward_tolerance: Maximum absolute difference between two rewards for
+            them to count as the same. Must be finite and nonnegative, and is
+            expressed in the environment's reward units.
     '''
 
-    def __init__(self, buffer_size, seed, input_dim, tolerance=1e-3):
+    def __init__(self, buffer_size, seed, input_dim, tolerance=1e-3, reward_tolerance=1e-2):
         if isinstance(buffer_size, bool) or not isinstance(buffer_size, numbers.Integral):
             raise TypeError("buffer_size must be an integer.")
         if buffer_size < 1:
@@ -219,10 +223,11 @@ class ContinuousUniReplayBuffer(UniReplayBuffer):
             raise TypeError("input_dim must be an integer.")
         if input_dim < 1:
             raise ValueError("input_dim must be positive.")
-        if isinstance(tolerance, bool) or not isinstance(tolerance, numbers.Real):
-            raise TypeError("tolerance must be a real number.")
-        if not math.isfinite(float(tolerance)) or tolerance < 0:
-            raise ValueError("tolerance must be finite and nonnegative.")
+        for name, value in (("tolerance", tolerance), ("reward_tolerance", reward_tolerance)):
+            if isinstance(value, bool) or not isinstance(value, numbers.Real):
+                raise TypeError(f"{name} must be a real number.")
+            if not math.isfinite(float(value)) or value < 0:
+                raise ValueError(f"{name} must be finite and nonnegative.")
 
         # UniReplayBuffer.__init__ is intentionally not called: its exact-match
         # set cannot express "close enough". The sampling bookkeeping below
@@ -236,13 +241,17 @@ class ContinuousUniReplayBuffer(UniReplayBuffer):
 
         self.tolerance = float(tolerance)
         self._tolerance_sq = self.tolerance ** 2
+        self.reward_tolerance = float(reward_tolerance)
 
-        # Mirror of the states and actions held by ``pool``, used for the
-        # similarity search. Rows are written in a ring: while the buffer is not
-        # full the live rows are [0, self._size), and once it is full every row
-        # is live, so the live rows are always the first ``self._size`` rows.
+        # Mirror of the transitions held by ``pool``, used for the similarity
+        # search. Rows are written in a ring: while the buffer is not full the
+        # live rows are [0, self._size), and once it is full every row is live,
+        # so the live rows are always the first ``self._size`` rows.
         self._states = torch.zeros(self.buffer_size, self.input_dim, dtype=torch.float32)
         self._norms_sq = torch.zeros(self.buffer_size, dtype=torch.float32)
+        self._next_states = torch.zeros(self.buffer_size, self.input_dim, dtype=torch.float32)
+        self._next_norms_sq = torch.zeros(self.buffer_size, dtype=torch.float32)
+        self._rewards = torch.zeros(self.buffer_size, dtype=torch.float32)
         self._actions = torch.zeros(self.buffer_size, dtype=torch.long)
         self._size = 0
         self._write = 0
@@ -308,54 +317,139 @@ class ContinuousUniReplayBuffer(UniReplayBuffer):
             )
 
     def _index(self, transition: Transition):
-        '''Write a stored transition into the state index.'''
+        '''
+        Write a stored transition into the state, next-state and reward indices.
+        
+        Pre-calculate the norm of the state and the next state, 
+        so that we can reuse them all the time in the later training 
+        without calculating the norm every time.
+        '''
+        write = self._write
+
         flat_state = transition.state.detach().reshape(-1).to(
             device=self._states.device, dtype=self._states.dtype
         )
-        self._states[self._write] = flat_state
-        self._norms_sq[self._write] = torch.dot(flat_state, flat_state)
-        self._actions[self._write] = int(transition.action)
-        self._write = (self._write + 1) % self.buffer_size
+        self._states[write] = flat_state
+        self._norms_sq[write] = torch.dot(flat_state, flat_state)
+
+        flat_next_state = transition.next_state.detach().reshape(-1).to(
+            device=self._next_states.device, dtype=self._next_states.dtype
+        )
+        self._next_states[write] = flat_next_state
+        self._next_norms_sq[write] = torch.dot(flat_next_state, flat_next_state)
+
+        self._rewards[write] = float(transition.reward)
+        self._actions[write] = int(transition.action)
+
+        self._write = (write + 1) % self.buffer_size
         if self._size < self.buffer_size:
             self._size += 1
 
+    def _close_rows(self, rows, norms_sq, candidate) -> torch.Tensor:
+        '''Boolean mask of the ``rows`` lying within ``tolerance`` of ``candidate``.'''
+        if rows.shape[0] == 0:
+            return torch.zeros(0, dtype=torch.bool, device=rows.device)
+
+        candidate = candidate.reshape(-1)
+        # ||a - b||^2 = ||a||^2 + ||b||^2 - 2 * a . b, evaluated as one
+        # matrix-vector product so no (rows, input_dim) temporary is allocated.
+        inner_products = rows.mv(candidate)
+        candidate_norm = torch.dot(candidate, candidate)
+        squared_distance = torch.clamp(
+            norms_sq + candidate_norm - 2.0 * inner_products, min=0.0
+        )
+        # The identity cancels catastrophically for nearby vectors, so rows in
+        # the rounding band around the threshold are rechecked exactly. The band
+        # only ever over-includes rows, which costs a little compute but never
+        # changes the answer.
+        eps = torch.finfo(rows.dtype).eps
+        # The scale is the maximum of ||a - b||^2
+        scale = norms_sq + candidate_norm + 2.0 * inner_products.abs()
+        # eps * scale: It is the upper band of the rounding band
+        # of a^2+b^2-2ab when a and b are scalers.
+        # because a^2+b^2-2ab <= a^2+b^2+2ab and the gap between two large float numbers 
+        # is larger than the gap between two small float numbers,
+        # which means, the quantization error, which is the distance of the mathematical result of (a - b)^2
+        # mapped into the closest representable float number by computer,
+        # is smaller than the number multiplying the exponent part of this floating-point number a^2+b^2+2ab
+        # by epsilon, and this number is even smaller than eps * scale.
+        
+        # (self.input_dim + 8): And we know the calculation of the norm of a vector 
+        # contains multiple operations described above.
+        # So the worst-case scenario is when those quantization errors are in the same direction. 
+        # For example, if those mathematical results are all on the right side of the representable 
+        # float member, when they do a summation, their quantization errors also do a summation.
+
+        # The number 8 is just an empirical number and 
+        # it can be larger or could be smaller theoretically.
+        rounding_band = (self.input_dim + 8) * eps * scale
+
+        # If the worst case happened(squared_distance + rounding_band) 
+        # and it doesn't go beyond the tolerance, 
+        # it can be safely considered as similar.
+        close = squared_distance + rounding_band <= self._tolerance_sq 
+        # (~close): for those rows which `squared_distance + rounding_band` go beyond tolerance,
+        #  close: T T T F F F
+        # ~close: F F F T T T
+        # The second condition: If the distance is so larger than tolerance 
+        # that it can't touch tolerance threshold, even it is subjected by the running band.
+        # undecided: F F F T T F
+        undecided = (~close) & (squared_distance - rounding_band <= self._tolerance_sq)
+        if bool(undecided.any()):
+            exact_distance = torch.sum((rows[undecided] - candidate) ** 2, dim=1)
+            close[undecided] = exact_distance <= self._tolerance_sq
+        return close
+
     def _has_similar(self, transition: Transition) -> bool:
-        '''Return True when a stored transition has the same action and a close state.'''
+        '''Return True when a stored transition matches on action, reward, state and next state.'''
         size = self._size
         if size == 0:
             return False
 
+        # Check for the same action.
+        # If there are no matches, we can skip the rest of the checks
+        # because it implies that it's a brand new transition.
         same_action = self._actions[:size] == int(transition.action)
         if not bool(same_action.any()):
             return False
 
-        candidate = transition.state.detach().reshape(-1).to(
-            device=self._states.device, dtype=self._states.dtype
-        )
-        # ||a - b||^2 = ||a||^2 + ||b||^2 - 2 * a . b, evaluated as one
-        # matrix-vector product so no (size, input_dim) temporary is allocated.
-        inner_products = self._states[:size].mv(candidate)
-        candidate_norm = torch.dot(candidate, candidate)
-        squared_distance = torch.clamp(
-            self._norms_sq[:size] + candidate_norm - 2.0 * inner_products,
-            min=0.0,
-        )
-        # The identity cancels catastrophically for nearby vectors, so rows in
-        # the rounding band around the threshold are rechecked exactly below.
-        # The bound only ever over-includes rows, which costs a little compute
-        # but never changes the answer.
-        eps = torch.finfo(self._states.dtype).eps
-        scale = self._norms_sq[:size] + candidate_norm + 2.0 * inner_products.abs()
-        rounding_band = (self.input_dim + 8) * eps * scale
-
-        definitely_similar = same_action & (squared_distance <= self._tolerance_sq - rounding_band)
-        if bool(definitely_similar.any()):
-            return True
-
-        ambiguous = same_action & (squared_distance <= self._tolerance_sq + rounding_band)
-        if not bool(ambiguous.any()):
+        close_reward = (
+            self._rewards[:size] - float(transition.reward)
+        ).abs() <= self.reward_tolerance
+        # candidates: the indices of the transitions that are similar to the current transition 
+        # on action and reward (x, a, r, x, x, x)
+        candidates = (same_action & close_reward).nonzero(as_tuple=True)[0]
+        # If there isn't any match, which means it's a new (x, a, r, x, x, x)
+        # or the trasition is branch new on pair (a,r)
+        if candidates.numel() == 0:
             return False
 
-        ambiguous_states = self._states[:size][ambiguous]
-        exact_distance = torch.sum((ambiguous_states - candidate) ** 2, dim=1)
-        return bool((exact_distance <= self._tolerance_sq).any())
+        candidate_state = transition.state.detach().reshape(-1).to(
+            device=self._states.device, dtype=self._states.dtype
+        )
+        # self._states[candidates]: we only need to check the states
+        # that are similar to the current transition on action and reward,
+        # those transitions that are not similar to the current transition on action and reward
+        # are finally determined as not similar to the current transition
+        # even if they are similar to the current transition on state
+        state_close = self._close_rows(
+            self._states[candidates], self._norms_sq[candidates], candidate_state
+        )
+        # If it's a brand new transition because of the s in (s,a,r,s',x,x) is brand new.
+        # finalists: the index of transitions that are similar to the current transition on (s,a,r,x,x,x)
+        finalists = candidates[state_close]
+        if finalists.numel() == 0:
+            return False
+
+        # If the new transition is similar with at least one transition on (s,a,r,x,x,x),
+        # we need to check the next state.
+        candidate_next_state = transition.next_state.detach().reshape(-1).to(
+            device=self._next_states.device, dtype=self._next_states.dtype
+        )
+        next_state_close = self._close_rows(
+            self._next_states[finalists], self._next_norms_sq[finalists], candidate_next_state
+        )
+        # If there is any true in next_state_close, 
+        # which means there is at least one transition that is similar to the current transition
+        # on (s,a,r,s',x,x) and we don't care about the last two elements.
+        return bool(next_state_close.any())
