@@ -5,6 +5,7 @@ import random
 import numpy as np
 import torch.nn as nn
 import gymnasium as gym
+from pathlib import Path
 from collections.abc import Sequence
 from torch.utils.tensorboard import SummaryWriter
 from typing import Tuple
@@ -135,6 +136,19 @@ class ActorDQNAgent(DQNAgent):
         self.eval_rng.manual_seed(seed)
         self.transition_counter=set()
 
-        self.best_solved_rate=0
+        self.best_solved_rate=-1
+        self.best_actor = None
         self.best_model = None
         self.best_target_network = None
+
+    def _save_best_model(self):
+
+        self.best_model = copy.deepcopy(self.qnetwork)
+        self.best_target_network = copy.deepcopy(self.q_target_network)
+        self.best_actor = copy.deepcopy(self.actor_dqn_network)
+
+        model_dir = Path(self.tensorboard_writer.log_dir) / "model"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        torch.save(self.best_model.state_dict(), model_dir / "q_network.pt")
+        torch.save(self.best_target_network.state_dict(), model_dir / "q_target_network.pt")
+        torch.save(self.best_actor.state_dict(), model_dir / "actor_network.pt")

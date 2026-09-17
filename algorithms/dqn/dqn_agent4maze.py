@@ -159,8 +159,7 @@ class DQNAgent4Maze(DQNAgent):
 
         if evaluation and self.best_solved_rate < (solved/self.num_eval_episodes):
             self.best_solved_rate = solved/self.num_eval_episodes
-            self.best_model = copy.deepcopy(self.qnetwork)
-            self.best_target_network = copy.deepcopy(self.q_target_network)
+            self._save_best_model()
         
         return np.mean(returns), np.mean(lengths), solved/self.num_eval_episodes
 
@@ -168,6 +167,9 @@ class DQNAgent4Maze(DQNAgent):
         """
         Evaluate each validation maze once and log final metrics after training.
         """
+        if self.best_model is None:
+            return 
+        
         assert isinstance(self.best_model, QNetwork)
 
         env = self.eval_env

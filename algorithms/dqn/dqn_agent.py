@@ -4,6 +4,7 @@ import random
 import numpy as np
 import gymnasium as gym
 from collections.abc import Sequence
+from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
 from typing import Tuple
 from ..common.exploration_rate_calculation import ClassicalExploration
@@ -187,10 +188,19 @@ class DQNAgent:
 
         if evaluation and self.best_solved_rate < (solved/self.num_eval_episodes):
             self.best_solved_rate = solved/self.num_eval_episodes
-            self.best_model = copy.deepcopy(self.qnetwork)
-            self.best_target_network = copy.deepcopy(self.q_target_network)
+            self._save_best_model()
         
         return np.mean(returns), np.mean(lengths), solved/self.num_eval_episodes
+
+    def _save_best_model(self):
+        
+        self.best_model = copy.deepcopy(self.qnetwork)
+        self.best_target_network = copy.deepcopy(self.q_target_network)
+
+        model_dir = Path(self.tensorboard_writer.log_dir) / "model"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        torch.save(self.best_model.state_dict(), model_dir / "q_network.pt")
+        torch.save(self.best_target_network.state_dict(), model_dir / "q_target_network.pt")
 
     def get_policy(self, state:torch.Tensor, *args, **kwargs) -> int:
         with torch.no_grad():
@@ -346,7 +356,7 @@ class DQNAgent:
         self.tensorboard_writer = SummaryWriter(log_dir=tensorboard_log_dir)
         self.transition_counter=set()
 
-        self.best_solved_rate=0
+        self.best_solved_rate=-1
         self.best_model = None
 
     def _setup_dqn_parameters(self, gamma, tau):

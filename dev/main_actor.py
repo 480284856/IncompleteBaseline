@@ -17,11 +17,9 @@ import torch
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ..algorithms.common.exploration_rate_calculation import StepDecay
-from ..algorithms.actordqn.actordqn_agent4maze import ActorDQNAgent4Maze
+# from ..algorithms.actordqn.actordqn_agent4maze import ActorDQNAgent4Maze
+from ..algorithms.actordqn.actordqn_agent4mazeRandom_selection import ActorDQNAgent4Maze
 from ..envs.procedual_maze.env import Maze
-
-MODEL_SAVE_DIR = Path(__file__).resolve().parent / "models"
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse command-line options for a training run."""
@@ -53,19 +51,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=None,
         help="TensorBoard output directory (default: an automatic run directory under runs/).",
     )
-    parser.add_argument("--model-save-dir", type=str, default=str(MODEL_SAVE_DIR), help="Directory for saved model parameters.")
     parser.add_argument("--batch-size", type=int, default=64, help="The size of data to sample in the replay buffer during each training")
     parser.add_argument("--learning-starts", type=int, default=2048)
     parser.add_argument("--replay-capacity", type=int, default=500_000)
     parser.add_argument("--gamma", type=float, default=0.99)
-    parser.add_argument("--epsilon-start", type=float, default=1.0)
-    parser.add_argument("--epsilon-end", type=float, default=0.05)
-    parser.add_argument("--epsilon-decay", type=float, default=200_000)
+
     parser.add_argument("--training-freq", type=int, default=1)
     parser.add_argument("--grad-step-per-train", type=int, default=1)
-    parser.add_argument("--max-episode-steps-warmup", type=int, default=None,
-        help="Episode step limit before learning starts (default: --max-episode-steps).",
-    )
+
     parser.add_argument(
         "--tau",
         type=float,
@@ -74,24 +67,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=42)
 
-    parser.add_argument("--random-rollout-stategy", type=str, choices=["MABRollout"], default=None,
-                        help="The exploration strategy used during the random sampling stage at the beginning of the training." \
-                        "'None' means uniformly choosing an action from the states.")
-
-    parser.add_argument("--use-uni-replay-buffer", action="store_true",
-                        help="Reject exact duplicate transitions during warmup and training.")
-    parser.add_argument("--use-rheostat", action="store_true",
-                        help="Use Rheostat replay admission during warmup and training.")
-    parser.add_argument("--rheostat-m", type=float, default=0.5,
-                        help="Rheostat duplicate-count decay rate (nonnegative).")
-    parser.add_argument("--rheostat-k", type=float, default=5.0,
-                        help="Rheostat reward sigmoid slope (positive).")
-    parser.add_argument("--rheostat-b", type=float, default=-0.1,
-                        help="Rheostat reward sigmoid offset.")
 
     args = parser.parse_args(argv)
-    if args.max_episode_steps_warmup is not None and args.max_episode_steps_warmup < 1:
-        parser.error("--max-episode-steps-warmup must be a positive integer")
 
     print("Arguments:")
     for key, value in vars(args).items():
@@ -111,14 +88,6 @@ class TensorObservation(gym.ObservationWrapper):
 
     def observation(self, observation):
         return torch.as_tensor(observation, dtype=torch.float32).reshape(1, -1)
-
-def save_model(model, filename: str, save_dir=MODEL_SAVE_DIR) -> Path:
-    # expanduser() converts the path to the user's home directory.
-    # For example, ~/models becomes /Users/jay/models
-    save_path = Path(save_dir).expanduser() / filename
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), save_path)
-    return save_path
 
 def create_environments(
     width: int, height: int, seed: int, logger,
@@ -168,29 +137,24 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     try:
         agent = ActorDQNAgent4Maze(
+            seed=args.seed,
             input_dim=training_environment.observation_space.shape[1],
             output_dim=training_environment.action_space.n,
-            seed=args.seed,
-            replay_buffer_size=args.replay_capacity,
-            training_env=training_environment,
-            eval_env=evaluation_environment,
+
             sample_batch_size=args.batch_size,
+            replay_buffer_size=args.replay_capacity,
             gamma=args.gamma,
             tau=args.tau,
+
+            training_env=training_environment,
+            eval_env=evaluation_environment,
             total_time_steps=args.total_time_steps,
             learning_start=args.learning_starts,
-            max_episode_steps_warmup=args.max_episode_steps_warmup,
             training_freq=args.training_freq,
             grad_step_per_train=args.grad_step_per_train,
             num_eval_episodes=args.evaluation_episodes,
             eval_freq=args.evaluation_frequency or None,
             tensorboard_log_dir=args.tensorboard_log_dir,
-            random_rollout_stategy=args.random_rollout_stategy,
-            use_rheostat=args.use_rheostat,
-            use_uni_replay_buffer=args.use_uni_replay_buffer,
-            rheostat_m=args.rheostat_m,
-            rheostat_k=args.rheostat_k,
-            rheostat_b=args.rheostat_b,
         )
         logger.info(
             "Training DQN on %sx%s mazes for %s timesteps using CPU.",
@@ -198,10 +162,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         logger.info("TensorBoard logs: %s", agent.tensorboard_writer.log_dir)
         agent.train()
-        agent.final_evaluation()
-        target_network_to_save = agent.best_target_network if agent.best_target_network is not None else agent.q_target_network
-        save_path = save_model(target_network_to_save, "q_target_network_actordqn.pt", args.model_save_dir)
-        logger.info("Model parameters saved to: %s", save_path)
     finally:
         training_environment.close()
         evaluation_environment.close()

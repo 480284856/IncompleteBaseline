@@ -168,8 +168,7 @@ class ActorDQNAgent4Maze(ActorDQNAgent):
 
         if evaluation and self.best_solved_rate < (solved/self.num_eval_episodes):
             self.best_solved_rate = solved/self.num_eval_episodes
-            self.best_model = copy.deepcopy(self.qnetwork)
-            self.best_target_network = copy.deepcopy(self.q_target_network)
+            self._save_best_model()
         
         return np.mean(returns), np.mean(lengths), solved/self.num_eval_episodes
 
@@ -178,7 +177,10 @@ class ActorDQNAgent4Maze(ActorDQNAgent):
         """
         Evaluate each validation maze once and log final metrics after training.
         """
-        assert isinstance(self.best_model, QNetwork)
+        if self.best_actor is None:
+            return
+        
+        assert isinstance(self.best_actor, QNetwork)
 
         env = self.eval_env
         num_mazes = len(env.unwrapped.evaluation_mazes)
@@ -188,6 +190,9 @@ class ActorDQNAgent4Maze(ActorDQNAgent):
         returns, lengths = [], []
         solved = 0
         try:
+            tmp = self.actor_dqn_network
+            self.actor_dqn_network = self.best_actor
+
             with torch.no_grad():
                 for maze_index in range(num_mazes):
                     state, _ = self._reset_env(env, options={
@@ -197,8 +202,7 @@ class ActorDQNAgent4Maze(ActorDQNAgent):
                     rewards = 0.0
                     length = 0
                     while True:
-                        with torch.no_grad():
-                            action = self.best_model(state).argmax().item()
+                        action = self.get_policy(state=state)
                         state, reward, terminated, truncated, _ = env.step(action)
                         rewards += float(reward)
                         length += 1
@@ -207,13 +211,15 @@ class ActorDQNAgent4Maze(ActorDQNAgent):
                             break
                     returns.append(rewards)
                     lengths.append(length)
-        except Exception as e:
-            print(e)
 
-        mean_return = float(np.mean(returns))
-        mean_length = float(np.mean(lengths))
-        success_rate = solved / num_mazes
-    
-        self.tensorboard_writer.add_scalar("final_eval/return", mean_return, self.total_time_steps)
-        self.tensorboard_writer.add_scalar("final_eval/steps", mean_length, self.total_time_steps)
-        self.tensorboard_writer.add_scalar("final_eval/success_rate", success_rate, self.total_time_steps)
+            mean_return = float(np.mean(returns))
+            mean_length = float(np.mean(lengths))
+            success_rate = solved / num_mazes
+        
+            self.tensorboard_writer.add_scalar("final_eval/return", mean_return, self.total_time_steps)
+            self.tensorboard_writer.add_scalar("final_eval/steps", mean_length, self.total_time_steps)
+            self.tensorboard_writer.add_scalar("final_eval/success_rate", success_rate, self.total_time_steps)
+        except Exception as e:
+            raise e
+        finally:
+            self.actor_dqn_network = tmp
