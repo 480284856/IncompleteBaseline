@@ -4,7 +4,7 @@ from torch import nn
 import torch.nn.functional as F
 
 # The architecture every maze experiment in this repository was run with.
-DEFAULT_HIDDEN_SIZES = (128, 128, 64, 32)
+DEFAULT_HIDDEN_SIZES = (64, 32)
 
 
 class QNetwork(nn.Module):

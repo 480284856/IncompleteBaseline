@@ -1,4 +1,4 @@
-"""Train and evaluate the DQN agent on the maze environment."""
+"""Train and evaluate the ActorDQN agent on CartPole."""
 
 from __future__ import annotations
 
@@ -13,21 +13,37 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-# Allow direct execution from ActorDQN while importing its sibling package.
+# Allow both package execution and direct execution of this debug entry point.
 if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from IncompleteBaseline.algorithms.actordqn.actordqn_agent4cartpole import (
+        ActorDQNAgent4CartPole,
+    )
+else:
+    from ...algorithms.actordqn.actordqn_agent4cartpole import ActorDQNAgent4CartPole
 
-from ..algorithms.actordqn.actordqn_agent4maze import ActorDQNAgent4Maze
-# from ..algorithms.actordqn.actordqn_agent4mazeRandom_selection import ActorDQNAgent4Maze
-from ..envs.procedual_maze.env import Maze
+
+class TensorObservation(gym.ObservationWrapper):
+    """Flatten CartPole observations into the tensor shape expected by the agent."""
+
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+        input_dim = int(np.prod(env.observation_space.shape))
+        self.observation_space = gym.spaces.Box(
+            low=np.asarray(env.observation_space.low).reshape(1, input_dim),
+            high=np.asarray(env.observation_space.high).reshape(1, input_dim),
+            dtype=np.float32,
+        )
+
+    def observation(self, observation):
+        return torch.as_tensor(observation, dtype=torch.float32).reshape(1, -1)
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse command-line options for a training run."""
     parser = argparse.ArgumentParser(
-        description="Train the DQN agent on generated mazes."
+        description="Train the Actor DQN agent on cart pole."
     )
-    parser.add_argument("--width", type=int, default=4)
-    parser.add_argument("--height", type=int, default=4)
+
     parser.add_argument("--total-time-steps", type=int, default=20_000_000, help="The total time to call env.step(action)")
     parser.add_argument("--max-episode-steps", 
                         type=int, default=10_000, 
@@ -76,45 +92,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
-class TensorObservation(gym.ObservationWrapper):
-    """Provide the baseline's single-environment float32 tensor input."""
-
-    def __init__(self, env: Maze):
-        super().__init__(env)
-        input_dim = int(np.prod(env.observation_space.shape))
-        self.observation_space = gym.spaces.Box(
-            low=0.0, high=1.0, shape=(1, input_dim), dtype=np.float32
-        )
-
-    def observation(self, observation):
-        return torch.as_tensor(observation, dtype=torch.float32).reshape(1, -1)
-
 def create_environments(
-    width: int, height: int, seed: int, logger,
+    seed: int, 
     max_episode_steps: int, max_episode_steps_eval: int,
 ) -> tuple[TensorObservation, TensorObservation]:
-    """Create independent environments sharing one generated maze dataset."""
-    training_environment = Maze(
-        width=width, height=height,
-        train_step_limitation=max_episode_steps,
-        eval_step_limitation=max_episode_steps_eval,
+    """Create independent training and evaluation CartPole environments."""
+    training_environment = TensorObservation(
+        gym.make("CartPole-v1", max_episode_steps=max_episode_steps)
     )
-    evaluation_environment = Maze(
-        width=width, height=height,
-        train_step_limitation=max_episode_steps_eval,
-        eval_step_limitation=max_episode_steps_eval,
+    evaluation_environment = TensorObservation(
+        gym.make("CartPole-v1", max_episode_steps=max_episode_steps_eval)
     )
-    logger.info("Generating maze dataset for %sx%s mazes.", width, height)
-    training_environment.generate_maze(seed=seed)
-    logger.info(f"The size of a training set is {training_environment.training_mazes.shape[0]}")
-    logger.info(f"The size of a evaluation set is {training_environment.evaluation_mazes.shape[0]}")
-    evaluation_environment.training_mazes = training_environment.training_mazes
-    evaluation_environment.evaluation_mazes = training_environment.evaluation_mazes
 
-    training_environment = TensorObservation(training_environment)
-    evaluation_environment = TensorObservation(evaluation_environment)
-    training_environment.reset(seed=seed, options={"is_evaluation": False})
-    evaluation_environment.reset(seed=seed + 1, options={"is_evaluation": True})
+    training_environment.reset(seed=seed)
+    evaluation_environment.reset(seed=seed + 1)
     return training_environment, evaluation_environment
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -128,15 +119,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     torch.manual_seed(args.seed)
 
     training_environment, evaluation_environment = create_environments(
-        width=args.width,
-        height=args.height,
         seed=args.seed,
-        logger=logger,
         max_episode_steps=args.max_episode_steps,
         max_episode_steps_eval=args.max_episode_steps_eval,
     )
     try:
-        agent = ActorDQNAgent4Maze(
+        agent = ActorDQNAgent4CartPole(
             seed=args.seed,
             input_dim=training_environment.observation_space.shape[1],
             output_dim=training_environment.action_space.n,
@@ -157,8 +145,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             tensorboard_log_dir=args.tensorboard_log_dir,
         )
         logger.info(
-            "Training DQN on %sx%s mazes for %s timesteps using CPU.",
-            args.width, args.height, args.total_time_steps,
+            "Training ActorDQN on CartPole for %s timesteps using CPU.",
+            args.total_time_steps,
         )
         logger.info("TensorBoard logs: %s", agent.tensorboard_writer.log_dir)
         agent.train()

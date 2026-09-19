@@ -342,7 +342,7 @@ class DQNAgent:
         self.sample_batch_size=sample_batch_size
 
         self.loss_fn=loss_fn
-        self.optim = torch.optim.Adam(self.qnetwork.parameters(), lr=1e-3)
+        self.optim = torch.optim.Adam(self.qnetwork.parameters(), lr=5e-5)
 
         self._rng = random.Random(self.seed)
 

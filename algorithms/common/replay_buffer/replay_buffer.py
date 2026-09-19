@@ -141,7 +141,11 @@ class FastReplayBuffer:
             raise ValueError(
                 f"Cannot sample {batch_size} transitions from a buffer of size {n}."
             )
-        indices = np.array(self._rng.sample(range(n), batch_size), dtype=np.int64)
+        logical = np.array(self._rng.sample(range(n), batch_size), dtype=np.int64)
+        # Once the ring buffer has wrapped, its physical order is rotated by
+        # self._pos relative to FIFO order. Map positions back so a sampled
+        # batch matches the plain ReplayBuffer deque exactly (reproducibility).
+        indices = (logical + self._pos) % self.buffer_size if self._full else logical
         return TransitionBatch(
             states=torch.from_numpy(self._states[indices]),
             actions=torch.from_numpy(self._actions[indices]),
