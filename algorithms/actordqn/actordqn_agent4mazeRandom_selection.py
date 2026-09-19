@@ -31,6 +31,8 @@ class ActorDQNAgent4Maze(ActorDQNAgent4Maze):
                  num_eval_episodes:int=100,
                  eval_freq:int|None=10_000,
                  tensorboard_log_dir:str|None=None,
+                 debug:bool=False,
+                 debug_log_interval:int=1000,
                  *args, **kwargs):
         '''
         Args:
@@ -71,6 +73,8 @@ class ActorDQNAgent4Maze(ActorDQNAgent4Maze):
             num_eval_episodes,
             eval_freq,
             tensorboard_log_dir,
+            debug,
+            debug_log_interval,
             *args, **kwargs
         )
 
@@ -86,15 +90,6 @@ class ActorDQNAgent4Maze(ActorDQNAgent4Maze):
         try:
             state, _ = self._reset_env(self.training_env, options={"is_evaluation": False})
             for time_step in bar:
-                if debug_mode:
-                    state_key = tuple(state.detach().cpu().reshape(-1).tolist())
-                    self.transition_counter.add(state_key)
-                    self.tensorboard_writer.add_scalar(
-                        "debug/num_unique_states",
-                        len(self.transition_counter),
-                        time_step,
-                    )
-
                 if time_step >= self.learning_start:
                     next_state, _, terminated, truncated, _ = self.rollout(state=state)
                     # if training_step % self.training_freq == 0:

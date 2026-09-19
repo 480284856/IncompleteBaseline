@@ -42,6 +42,8 @@ class DQNAgent:
                  num_eval_episodes:int=100,
                  eval_freq:int|None=10_000,
                  tensorboard_log_dir:str|None=None,
+                 debug:bool=False,
+                 debug_log_interval:int=1000,
                  *args, **kwargs):
         '''
         Args:
@@ -96,6 +98,8 @@ class DQNAgent:
             num_eval_episodes=num_eval_episodes,
             eval_freq=eval_freq,
             tensorboard_log_dir=tensorboard_log_dir,
+            debug=debug,
+            debug_log_interval=debug_log_interval,
         )
         self._setup_dqn_parameters(gamma=gamma, tau=tau)
         self._setup_replay_buffer(
@@ -113,15 +117,6 @@ class DQNAgent:
         try:
             state, _ = self._reset_env(self.training_env, **kwargs)
             for time_step in bar:
-                if debug_mode:
-                    state_key = tuple(state.detach().cpu().reshape(-1).tolist())
-                    self.transition_counter.add(state_key)
-                    self.tensorboard_writer.add_scalar(
-                        "debug/num_unique_states",
-                        len(self.transition_counter),
-                        time_step,
-                    )
-
                 if time_step >= self.learning_start:
                     next_state, _, terminated, truncated, _ = self.rollout(state=state)
                     if training_step % self.training_freq == 0:
@@ -206,7 +201,7 @@ class DQNAgent:
         with torch.no_grad():
                 return self.qnetwork(state).argmax().item()
         
-    def rollout(self, state:torch.Tensor, *args, **kwargs):
+    def rollout(self, state:torch.Tensor, time_step:int|None=None,*args, **kwargs):
         assert isinstance(state, torch.Tensor)
         assert state.shape == (1,self.input_dim), f"Expect shape of (1,{self.input_dim}), got {state.shape}"
         assert state.shape == (1,self.input_dim), "Current implementation is only for single environment, not for vectorized environment."
@@ -226,11 +221,11 @@ class DQNAgent:
             terminated,
             truncated
         )
-        self.replaybuffer.push(t)
+        self.replaybuffer.push(t, time_step)
 
         return next_state, reward, terminated, truncated, info
 
-    def random_rollout(self, state:torch.Tensor):
+    def random_rollout(self, state:torch.Tensor, time_step:int|None=None,*args, **kwargs):
         assert isinstance(state, torch.Tensor)
         assert state.shape == (1,self.input_dim), f"Expect shape of (1,{self.input_dim}), got {state.shape}"
 
@@ -245,7 +240,7 @@ class DQNAgent:
             terminated,
             truncated
         )
-        self.replaybuffer.push(t)
+        self.replaybuffer.push(t,time_step=time_step)
 
         return next_state, reward, terminated, truncated, info
     
@@ -336,7 +331,9 @@ class DQNAgent:
                         num_eval_episodes, 
                         eval_freq,
                         
-                        tensorboard_log_dir):
+                        tensorboard_log_dir,
+                        debug,
+                        debug_log_interval):
         self.training_env = training_env
         self.eval_env = eval_env
         self.sample_batch_size=sample_batch_size
@@ -359,13 +356,21 @@ class DQNAgent:
         self.best_solved_rate=-1
         self.best_model = None
 
+        self.debug = debug
+        self.debug_log_interval = debug_log_interval
+
     def _setup_dqn_parameters(self, gamma, tau):
         self.gamma = gamma
         self.tau = tau
 
     def _setup_replay_buffer(self, replay_buffer_size, *args, **kwargs):
-
-        self.replaybuffer = FastReplayBuffer(buffer_size=replay_buffer_size, seed=self.seed, input_dim=self.input_dim)
+        self.replaybuffer = FastReplayBuffer(
+            buffer_size=replay_buffer_size, 
+            seed=self.seed, 
+            input_dim=self.input_dim,
+            debug=self.debug,
+            tensorboard_writer=self.tensorboard_writer,
+            debug_log_interval=self.debug_log_interval)
 
     def _setup_rollout_strategies(self, *args, **kwargs):
             self.eps_exp_strategy=None

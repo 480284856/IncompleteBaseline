@@ -66,6 +66,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Fraction of online-network weights mixed into the target per update.",
     )
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument(
+        "--debug-log-interval",
+        type=int,
+        default=1000,
+        help="When --debug is set, write per-step debug scalars every N steps.",
+    )
 
 
     args = parser.parse_args(argv)
@@ -155,6 +162,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             num_eval_episodes=args.evaluation_episodes,
             eval_freq=args.evaluation_frequency or None,
             tensorboard_log_dir=args.tensorboard_log_dir,
+            debug=args.debug,
+            debug_log_interval=args.debug_log_interval
         )
         logger.info(
             "Training DQN on %sx%s mazes for %s timesteps using CPU.",

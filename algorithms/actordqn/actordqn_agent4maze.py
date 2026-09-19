@@ -37,6 +37,8 @@ class ActorDQNAgent4Maze(ActorDQNAgent):
                  num_eval_episodes:int=100,
                  eval_freq:int|None=10_000,
                  tensorboard_log_dir:str|None=None,
+                 debug:bool=False,
+                 debug_log_interval:int=1000,
                  *args, **kwargs):
         '''
         Args:
@@ -77,32 +79,23 @@ class ActorDQNAgent4Maze(ActorDQNAgent):
             num_eval_episodes,
             eval_freq,
             tensorboard_log_dir,
+            debug,
+            debug_log_interval,
             *args, **kwargs
         )
 
 
     def train(self, *args, **kwargs):
-        debug_mode = kwargs.get('debug', False)
-        
         bar = tqdm(range(1,self.total_time_steps+1))
         training_step = 1
-        if debug_mode:
+        if self.debug:
             solved_episode=0
 
         try:
             state, _ = self._reset_env(self.training_env, options={"is_evaluation": False})
             for time_step in bar:
-                if debug_mode:
-                    state_key = tuple(state.detach().cpu().reshape(-1).tolist())
-                    self.transition_counter.add(state_key)
-                    self.tensorboard_writer.add_scalar(
-                        "debug/num_unique_states",
-                        len(self.transition_counter),
-                        time_step,
-                    )
-
                 if time_step >= self.learning_start:
-                    next_state, _, terminated, truncated, _ = self.rollout(state=state)
+                    next_state, _, terminated, truncated, _ = self.rollout(state=state, time_step=time_step)
                     if training_step % self.training_freq == 0:
                         for _ in range(self.grad_step_per_train):
                             loss = self.update_qnetwork()
@@ -121,10 +114,10 @@ class ActorDQNAgent4Maze(ActorDQNAgent):
                         self.tensorboard_writer.flush()
                     training_step += 1
                 else:
-                    next_state, _, terminated, truncated, _ = self.random_rollout(state=state) # random rollout
+                    next_state, _, terminated, truncated, _ = self.random_rollout(state=state, time_step=time_step) # random rollout
                 if terminated or truncated:
                     state, _ = self._reset_env(self.training_env, options={"is_evaluation": False})
-                    if debug_mode:
+                    if self.debug:
                         if time_step >= self.learning_start:
                             if terminated:
                                 solved_episode += 1

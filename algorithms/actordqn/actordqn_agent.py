@@ -38,6 +38,8 @@ class ActorDQNAgent(DQNAgent):
                  num_eval_episodes:int=100,
                  eval_freq:int|None=10_000,
                  tensorboard_log_dir:str|None=None,
+                 debug:bool=False,
+                 debug_log_interval:int=1000,
                  *args, **kwargs):
         '''
         Args:
@@ -78,6 +80,8 @@ class ActorDQNAgent(DQNAgent):
             num_eval_episodes,
             eval_freq,
             tensorboard_log_dir,
+            debug,
+            debug_log_interval,
             *args, **kwargs
         )
 
