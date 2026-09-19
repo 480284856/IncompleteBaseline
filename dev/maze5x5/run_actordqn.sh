@@ -1,6 +1,6 @@
 cd /Users/jay/Desktop/RL/project/
 
-python -m IncompleteBaseline.dev.main_actor --tensorboard-log-dir "IncompleteBaseline/dev/logs/actorqdn/maze5x5/normal/v1" \
+python -m IncompleteBaseline.dev.main_actor --tensorboard-log-dir "IncompleteBaseline/dev/logs/actorqdn/maze5x5/normal/small_lr/v1" \
     --width 5 \
     --height 5 \
     --max-episode-steps-eval 128 \
