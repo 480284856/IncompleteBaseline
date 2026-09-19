@@ -8,7 +8,7 @@ from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
 from typing import Tuple
 from ..common.exploration_rate_calculation import ClassicalExploration
-from ..common.replay_buffer.replay_buffer import ReplayBuffer, Transition, TransitionBatch
+from ..common.replay_buffer.replay_buffer import FastReplayBuffer, ReplayBuffer, Transition, TransitionBatch
 from ..common.replay_buffer.rheostat import Rheostat
 from ..common.replay_buffer.uni_replay_buffer import (
     UniReplayBuffer,
@@ -250,7 +250,7 @@ class DQNAgent:
         return next_state, reward, terminated, truncated, info
     
     def update_qnetwork(self,) :
-        if len(self.replaybuffer.pool) >= self.sample_batch_size:
+        if len(self.replaybuffer) >= self.sample_batch_size:
             batch = self.replaybuffer.sample(batch_size=self.sample_batch_size)
 
             td_target = self._td_target(batch)
@@ -342,7 +342,7 @@ class DQNAgent:
         self.sample_batch_size=sample_batch_size
 
         self.loss_fn=loss_fn
-        self.optim = torch.optim.Adam(self.qnetwork.parameters())
+        self.optim = torch.optim.Adam(self.qnetwork.parameters(), lr=1e-3)
 
         self._rng = random.Random(self.seed)
 
@@ -365,7 +365,7 @@ class DQNAgent:
 
     def _setup_replay_buffer(self, replay_buffer_size, *args, **kwargs):
 
-        self.replaybuffer = ReplayBuffer(buffer_size=replay_buffer_size, seed=self.seed, input_dim=self.input_dim)
+        self.replaybuffer = FastReplayBuffer(buffer_size=replay_buffer_size, seed=self.seed, input_dim=self.input_dim)
 
     def _setup_rollout_strategies(self, *args, **kwargs):
             self.eps_exp_strategy=None

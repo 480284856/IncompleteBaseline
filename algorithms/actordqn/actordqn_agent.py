@@ -85,7 +85,7 @@ class ActorDQNAgent(DQNAgent):
         self._setup_actor_training(seed=seed)
 
     def update_qnetwork(self,):
-        if len(self.replaybuffer.pool) >= self.sample_batch_size:
+        if len(self.replaybuffer) >= self.sample_batch_size:
             batch = self.replaybuffer.sample(batch_size=self.sample_batch_size)
 
             td_target = self._td_target(batch)
@@ -128,7 +128,7 @@ class ActorDQNAgent(DQNAgent):
 
     def _setup_actor_training(self, seed):
         self.loss_fn_actor = nn.CrossEntropyLoss()
-        self.optim_actor = torch.optim.Adam(self.actor_dqn_network.parameters())
+        self.optim_actor = torch.optim.Adam(self.actor_dqn_network.parameters(), lr=1e-3)
         
         self.training_rng = torch.Generator()
         self.eval_rng = torch.Generator()

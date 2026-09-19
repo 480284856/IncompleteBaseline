@@ -52,6 +52,9 @@ class ReplayBuffer:
         self.seed = seed
         self._rng = random.Random(self.seed)
 
+    def __len__(self):
+        return len(self.pool)
+
     def push(self, transition: Transition):
         if not isinstance(transition, Transition):
             raise TypeError(
@@ -79,3 +82,72 @@ class ReplayBuffer:
             terminated=terminated_batch,
             truncated=truncated_batch
         )
+
+
+class FastReplayBuffer:
+    """Uniform replay backed by preallocated numpy arrays.
+
+    Sampling is O(batch_size): indices are drawn from range(len(self))
+    (O(1) indexing instead of O(n) deque traversal) and the whole batch is
+    gathered with one vectorized numpy fancy-index, then wrapped as torch
+    tensors without a copy. sample keeps the original no-replacement
+    behaviour; switch to self._rng.choices(range(n), k=batch_size) for
+    sampling with replacement (SB3 behaviour).
+    """
+
+    def __init__(self, buffer_size, seed, input_dim):
+        if buffer_size < 1:
+            raise ValueError("buffer_size must be positive.")
+        self.buffer_size = buffer_size
+        self.input_dim = input_dim
+        self._rng = random.Random(seed)
+
+        self._states = np.empty((buffer_size, input_dim), dtype=np.float32)
+        self._next_states = np.empty((buffer_size, input_dim), dtype=np.float32)
+        self._actions = np.empty((buffer_size, 1), dtype=np.int64)
+        self._rewards = np.empty((buffer_size, 1), dtype=np.float32)
+        self._terminated = np.empty((buffer_size, 1), dtype=np.bool_)
+        self._truncated = np.empty((buffer_size, 1), dtype=np.bool_)
+        self._pos = 0
+        self._full = False
+
+    def __len__(self):
+        return self.buffer_size if self._full else self._pos
+
+    def push(self, transition: Transition):
+        if not isinstance(transition, Transition):
+            raise TypeError(
+                "FastReplayBuffer.push() expects a single Transition object."
+            )
+        assert transition.state.shape == (1, self.input_dim)
+        assert transition.next_state.shape == (1, self.input_dim)
+
+        i = self._pos
+        self._states[i] = transition.state[0].detach().cpu().numpy()
+        self._next_states[i] = transition.next_state[0].detach().cpu().numpy()
+        self._actions[i, 0] = transition.action
+        self._rewards[i, 0] = transition.reward
+        self._terminated[i, 0] = transition.terminated
+        self._truncated[i, 0] = transition.truncated
+
+        self._pos += 1
+        if self._pos == self.buffer_size:
+            self._pos = 0
+            self._full = True
+
+    def sample(self, batch_size):
+        n = len(self)
+        if batch_size > n:
+            raise ValueError(
+                f"Cannot sample {batch_size} transitions from a buffer of size {n}."
+            )
+        indices = np.array(self._rng.sample(range(n), batch_size), dtype=np.int64)
+        return TransitionBatch(
+            states=torch.from_numpy(self._states[indices]),
+            actions=torch.from_numpy(self._actions[indices]),
+            rewards=torch.from_numpy(self._rewards[indices]),
+            next_states=torch.from_numpy(self._next_states[indices]),
+            terminated=torch.from_numpy(self._terminated[indices]),
+            truncated=torch.from_numpy(self._truncated[indices]),
+        )
+
