@@ -166,10 +166,7 @@ class FastReplayBuffer:
             # debug_log_interval pushes; the counters above stay exact.
             self._debug_pushes += 1
             if self._debug_pushes % self.debug_log_interval == 0:
-                info = self.get_debug_stats()
-                self.tensorboard_writer.add_scalar("debug/replaybuffer/top_10_transition_ratio", info['top_10_transition_ratio'], time_step)
-                self.tensorboard_writer.add_scalar("debug/replaybuffer/num_uni_trans", info['num_unique_transitions'], time_step)
-
+                self.record_debug_stats(time_step)
 
         self._pos += 1
         if self._pos == self.buffer_size:
@@ -196,19 +193,20 @@ class FastReplayBuffer:
             truncated=torch.from_numpy(self._truncated[indices]),
         )
 
-    def get_debug_stats(self):
+    def record_debug_stats(self, time_step):
         """Return duplicate statistics for transitions currently in the buffer."""
         if not self.debug:
             raise RuntimeError("Debug statistics require FastReplayBuffer(debug=True).")
 
-        size = len(self)
-        top_10_count = sum(
+        size = sum(self._transition_counts.values())
+        top_1000_count = sum(
             count for _, count in self._transition_counts.most_common(1000)
         )
-        return {
-            "top_10_transition_ratio": top_10_count / size if size else 0.0,
-            "num_unique_transitions": len(self._transition_counts),
-        }
+        top_1000_transition_ratio = top_1000_count / size if size else 0.0
+        num_unique_transitions = len(self._transition_counts)
+
+        self.tensorboard_writer.add_scalar("debug/replaybuffer/top_1000_transition_ratio", top_1000_transition_ratio, time_step)
+        self.tensorboard_writer.add_scalar("debug/replaybuffer/num_uni_trans", num_unique_transitions, time_step)
 
     def _transition_key(self, index):
         """Build an exact key from one complete transition in array storage."""
