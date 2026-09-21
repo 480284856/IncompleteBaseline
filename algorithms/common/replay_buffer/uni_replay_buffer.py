@@ -2,170 +2,96 @@ import torch
 import random
 import math
 import numbers
-from collections import deque
-from dataclasses import dataclass
+import numpy as np
+from collections.abc import Sequence
+from .replay_buffer import FastReplayBuffer, Transition, TransitionBatch
 
-@dataclass(eq=False)
-class Transition:
-    state: torch.Tensor
-    action: int
-    reward: float
-    next_state: torch.Tensor
-    terminated: bool
-    truncated: bool
+class UniReplayBuffer(FastReplayBuffer):
+    """Fast replay buffer that stores each exact transition at most once."""
 
-    def __post_init__(self):
-        assert isinstance(self.state, torch.Tensor)
-        assert isinstance(self.action, int)
-        assert isinstance(self.reward, numbers.Real)
-        assert isinstance(self.next_state, torch.Tensor)
-        assert isinstance(self.terminated, bool)
-        assert isinstance(self.truncated, bool)
-
-    def __eq__(self, other: object) -> bool:
-        '''
-        Check if two Transition objects are equal by checking each term from
-        easy to complex.
-        '''
-        if not isinstance(other, Transition):
-            return False
-        if (
-            self.action != other.action
-            or self.reward != other.reward
-            or self.terminated != other.terminated
-            or self.truncated != other.truncated
-        ):
-            return False
-        if (
-            self.state.shape != other.state.shape
-            or self.next_state.shape != other.next_state.shape
-        ):
-            return False
-        state_equal = (
-            torch.equal(self.state, other.state)
-            if self.state.device == other.state.device
-            else torch.equal(self.state.cpu(), other.state.cpu())
+    def __init__(self, buffer_size, seed, input_dim, debug=False, tensorboard_writer=None,
+                 debug_log_interval=1000):
+        super().__init__(
+            buffer_size=buffer_size,
+            seed=seed,
+            input_dim=input_dim,
+            debug=debug,
+            tensorboard_writer=tensorboard_writer,
+            debug_log_interval=debug_log_interval,
         )
-        if not state_equal:
+        self._keys = set()
+        self._slot_keys = [None] * buffer_size
+
+    def __contains__(self, transition: object) -> bool:
+        if not isinstance(transition, Transition):
             return False
-        next_state_equal = (
-            torch.equal(self.next_state, other.next_state)
-            if self.next_state.device == other.next_state.device
-            else torch.equal(self.next_state.cpu(), other.next_state.cpu())
-        )
-        return next_state_equal
-
-    def __hash__(self) -> int:
-        '''
-        The first time of calling this function will calculate the hash; the next time, it will return the hash directly.
-        '''
-        if not hasattr(self, "_cached_hash"):
-            state_key = tuple(self.state.detach().cpu().reshape(-1).tolist())
-            next_state_key = tuple(self.next_state.detach().cpu().reshape(-1).tolist())
-            object.__setattr__(
-                self,
-                "_cached_hash",
-                hash((
-                    state_key,
-                    self.action,
-                    float(self.reward),
-                    next_state_key,
-                    self.terminated,
-                    self.truncated,
-                )),
-            )
-        return self._cached_hash
-
-@dataclass
-class TransitionBatch:
-    states: torch.Tensor
-    actions: torch.Tensor
-    rewards: torch.Tensor
-    next_states: torch.Tensor
-    terminated: torch.Tensor
-    truncated: torch.Tensor
-
-    def __post_init__(self):
-        assert isinstance(self.states, torch.Tensor)
-        assert isinstance(self.actions, torch.Tensor)
-        assert isinstance(self.rewards, torch.Tensor)
-        assert isinstance(self.next_states, torch.Tensor)
-        assert isinstance(self.terminated, torch.Tensor)
-        assert isinstance(self.truncated, torch.Tensor)
-
-class UniReplayBuffer:
-    def __init__(self, buffer_size, seed, input_dim):
-        '''
-        Args:
-            input_dim: The dimension of representation of observation. It is used for safety checking.
-        '''
-        self.buffer_size = buffer_size
-        self.pool = deque(maxlen=buffer_size)
-        self.pool_set = set()
-        self.input_dim = input_dim
-
-        self.seed = seed
-        self._rng = random.Random(self.seed)
-
-    def __len__(self) -> int:
-        return len(self.pool)
-
-    def __contains__(self, transition: Transition) -> bool:
-        return transition in self.pool_set
+        return self.contains(transition)
 
     def contains(self, transition: Transition) -> bool:
-        '''Check whether the transition already exists in the pool.'''
-        return transition in self.pool_set
+        """Return whether the normalized transition is currently stored."""
+        return self._make_key(transition) in self._keys
 
-    def clear(self):
-        '''
-        useless function ...
-        but keep for future use
-        '''
-        self.pool.clear()
-        self.pool_set.clear()
+    def push(self, transition: Transition, time_step: int | None = None) -> bool:
+        """Add a transition unless the same normalized transition is present."""
+        self._validate(transition)
+        key = self._make_key(transition)
+        if key in self._keys:
+            return False
 
-    def push(self, transition: Transition) -> bool:
-        '''
-        Push a transition into the buffer.
+        slot = self._pos
+        evicted_key = self._slot_keys[slot] if self._full else None
+        super().push(transition, time_step=time_step)
 
-        Before pushing, check if the transition already exists in the pool.
-        If it already exists, do not push and return False.
+        if evicted_key is not None:
+            self._keys.remove(evicted_key)
+        self._slot_keys[slot] = key
+        self._keys.add(key)
+        return True
 
-        Returns:
-            bool: True if the transition was added, False if it was skipped because
-                  it already existed in the pool.
-        '''
+    def record_debug_stats(self, time_step):
+        """Return duplicate statistics for transitions currently in the buffer."""
+        if not self.debug:
+            raise RuntimeError("Debug statistics require FastReplayBuffer(debug=True).")
+
+        num_unique_transitions = len(self._transition_counts)
+
+        self.tensorboard_writer.add_scalar("debug/uni-replaybuffer/num_uni_trans", num_unique_transitions, time_step)
+
+    def _validate(self, transition: Transition):
         if not isinstance(transition, Transition):
             raise TypeError(
-                "ReplayBuffer.push() expects a single Transition object."
+                "UniReplayBuffer.push() expects a single Transition object."
             )
         assert transition.state.shape == (1, self.input_dim)
         assert transition.next_state.shape == (1, self.input_dim)
 
-        if transition in self.pool_set:
-            return False
-
-        if len(self.pool) == self.buffer_size:
-            evicted = self.pool.popleft()
-            self.pool_set.discard(evicted)
-
-        self.pool.append(transition)
-        self.pool_set.add(transition)
-        return True
-
-    def sample(self, batch_size):
-        batch = self._rng.sample(self.pool, batch_size)
-        return self._make_batch(batch)
+    @staticmethod
+    def _make_key(transition: Transition):
+        """Match FastReplayBuffer's stored dtypes before testing identity."""
+        state = transition.state[0].detach().cpu().numpy().astype(np.float32, copy=False)
+        next_state = transition.next_state[0].detach().cpu().numpy().astype(np.float32, copy=False)
+        reward = np.asarray(transition.reward, dtype=np.float32)
+        return (
+            state.tobytes(),
+            int(transition.action),
+            reward.tobytes(),
+            next_state.tobytes(),
+            transition.terminated,
+            transition.truncated,
+        )
 
     @staticmethod
     def _make_batch(batch):
-        state_batch = torch.concat([ torch.as_tensor(t.state, dtype=torch.float32) for t in batch ], dim=0)
-        action_batch = torch.stack([ torch.as_tensor(t.action, dtype=torch.long).reshape(1) for t in batch ])
-        reward_batch = torch.stack([ torch.as_tensor(t.reward, dtype=torch.float32).reshape(1) for t in batch ])
-        next_state_batch = torch.concat([ torch.as_tensor(t.next_state, dtype=torch.float32) for t in batch ], dim=0)
-        terminated_batch = torch.stack([ torch.as_tensor(t.terminated, dtype=torch.bool).reshape(1) for t in batch ])
-        truncated_batch = torch.stack([ torch.as_tensor(t.truncated, dtype=torch.bool).reshape(1) for t in batch ])
+        # The per-transition torch.as_tensor calls dominate the cost of
+        # sampling small batches, so gather each field once and cast the
+        # stacked result. This is bit-identical to casting every element
+        # individually (torch.cat([]) and torch.concat([]) raise alike).
+        state_batch = torch.cat([t.state for t in batch], dim=0).to(torch.float32)
+        action_batch = torch.tensor([t.action for t in batch], dtype=torch.long).reshape(-1, 1)
+        reward_batch = torch.tensor([t.reward for t in batch], dtype=torch.float32).reshape(-1, 1)
+        next_state_batch = torch.cat([t.next_state for t in batch], dim=0).to(torch.float32)
+        terminated_batch = torch.tensor([t.terminated for t in batch], dtype=torch.bool).reshape(-1, 1)
+        truncated_batch = torch.tensor([t.truncated for t in batch], dtype=torch.bool).reshape(-1, 1)
 
         return TransitionBatch(
             states=state_batch,
@@ -193,7 +119,7 @@ class ContinuousUniReplayBuffer(UniReplayBuffer):
     ``terminated`` and ``truncated`` take no part: for a numerical reward the
     outcome is already carried by ``reward`` and ``next_state``.
 
-    The stored states are mirrored into preallocated matrices, so the similarity
+    The stored states are shared with the parent through tensor views, so the similarity
     test costs two matrix-vector products instead of a Python-level scan. The
     cheap exact comparisons (action, reward) run first and the distance tests
     only on the surviving rows, so a push usually costs far less than a full
@@ -202,7 +128,7 @@ class ContinuousUniReplayBuffer(UniReplayBuffer):
 
     Args:
         buffer_size: Maximum number of stored transitions.
-        seed: Seed of the sampling RNG. Kept for interface compatibility.
+        seed: Seed of the sampling RNG.
         input_dim: Dimension of the flattened observation. Used for safety
             checking and to size the state index.
         tolerance: Maximum Euclidean distance between two states, and between
@@ -229,32 +155,19 @@ class ContinuousUniReplayBuffer(UniReplayBuffer):
             if not math.isfinite(float(value)) or value < 0:
                 raise ValueError(f"{name} must be finite and nonnegative.")
 
-        # UniReplayBuffer.__init__ is intentionally not called: its exact-match
-        # set cannot express "close enough". The sampling bookkeeping below
-        # mirrors it field by field, so sample() and _make_batch() still apply.
-        self.buffer_size = int(buffer_size)
-        self.pool = deque(maxlen=self.buffer_size)
-        self.input_dim = int(input_dim)
-
-        self.seed = seed
-        self._rng = random.Random(self.seed)
+        super().__init__(int(buffer_size), seed, int(input_dim))
 
         self.tolerance = float(tolerance)
         self._tolerance_sq = self.tolerance ** 2
         self.reward_tolerance = float(reward_tolerance)
 
-        # Mirror of the transitions held by ``pool``, used for the similarity
-        # search. Rows are written in a ring: while the buffer is not full the
-        # live rows are [0, self._size), and once it is full every row is live,
-        # so the live rows are always the first ``self._size`` rows.
-        self._states = torch.zeros(self.buffer_size, self.input_dim, dtype=torch.float32)
+        # Tensor views share the parent's ring storage without copying it.
+        self._states_view = torch.from_numpy(self._states)
+        self._next_states_view = torch.from_numpy(self._next_states)
+        self._actions_view = torch.from_numpy(self._actions[:, 0])
+        self._rewards_view = torch.from_numpy(self._rewards[:, 0])
         self._norms_sq = torch.zeros(self.buffer_size, dtype=torch.float32)
-        self._next_states = torch.zeros(self.buffer_size, self.input_dim, dtype=torch.float32)
         self._next_norms_sq = torch.zeros(self.buffer_size, dtype=torch.float32)
-        self._rewards = torch.zeros(self.buffer_size, dtype=torch.float32)
-        self._actions = torch.zeros(self.buffer_size, dtype=torch.long)
-        self._size = 0
-        self._write = 0
 
     def __contains__(self, transition: object) -> bool:
         if not isinstance(transition, Transition):
@@ -266,42 +179,17 @@ class ContinuousUniReplayBuffer(UniReplayBuffer):
         self._validate(transition)
         return self._has_similar(transition)
 
-    def clear(self):
-        '''Remove every transition, retaining the sampling RNG state.'''
-        self.pool.clear()
-        self._size = 0
-        self._write = 0
-
-    def push(self, transition: Transition) -> bool:
-        '''
-        Push a transition into the buffer.
-
-        Before pushing, check whether a similar transition already exists in the
-        pool. If it does, do not push and return False.
-
-        Returns:
-            bool: True if the transition was added, False if it was skipped
-                  because a similar transition already existed.
-        '''
+    def push(self, transition: Transition, time_step: int | None = None) -> bool:
+        """Reject similar transitions, otherwise insert through the parent."""
         self._validate(transition)
         if self._has_similar(transition):
             return False
 
-        if len(self.pool) == self.buffer_size:
-            self.pool.popleft()
-
-        # Keep the indexed contents independent of later caller-side mutations.
-        stored = Transition(
-            transition.state.detach().clone(),
-            transition.action,
-            float(transition.reward),
-            transition.next_state.detach().clone(),
-            transition.terminated,
-            transition.truncated,
-        )
-        self.pool.append(stored)
-        self._index(stored)
-        return True
+        slot = self._pos
+        inserted = super().push(transition, time_step=time_step)
+        if inserted:
+            self._update_norms(slot)
+        return inserted
 
     def _validate(self, transition: Transition):
         if not isinstance(transition, Transition):
@@ -316,34 +204,12 @@ class ContinuousUniReplayBuffer(UniReplayBuffer):
                 f"State tensors must have shape (1, {self.input_dim})."
             )
 
-    def _index(self, transition: Transition):
-        '''
-        Write a stored transition into the state, next-state and reward indices.
-        
-        Pre-calculate the norm of the state and the next state, 
-        so that we can reuse them all the time in the later training 
-        without calculating the norm every time.
-        '''
-        write = self._write
-
-        flat_state = transition.state.detach().reshape(-1).to(
-            device=self._states.device, dtype=self._states.dtype
-        )
-        self._states[write] = flat_state
-        self._norms_sq[write] = torch.dot(flat_state, flat_state)
-
-        flat_next_state = transition.next_state.detach().reshape(-1).to(
-            device=self._next_states.device, dtype=self._next_states.dtype
-        )
-        self._next_states[write] = flat_next_state
-        self._next_norms_sq[write] = torch.dot(flat_next_state, flat_next_state)
-
-        self._rewards[write] = float(transition.reward)
-        self._actions[write] = int(transition.action)
-
-        self._write = (write + 1) % self.buffer_size
-        if self._size < self.buffer_size:
-            self._size += 1
+    def _update_norms(self, slot):
+        """Cache norms of the float32 values actually stored by the parent."""
+        state = self._states_view[slot]
+        next_state = self._next_states_view[slot]
+        self._norms_sq[slot] = torch.dot(state, state)
+        self._next_norms_sq[slot] = torch.dot(next_state, next_state)
 
     def _close_rows(self, rows, norms_sq, candidate) -> torch.Tensor:
         '''Boolean mask of the ``rows`` lying within ``tolerance`` of ``candidate``.'''
@@ -402,19 +268,19 @@ class ContinuousUniReplayBuffer(UniReplayBuffer):
 
     def _has_similar(self, transition: Transition) -> bool:
         '''Return True when a stored transition matches on action, reward, state and next state.'''
-        size = self._size
+        size = len(self)
         if size == 0:
             return False
 
         # Check for the same action.
         # If there are no matches, we can skip the rest of the checks
         # because it implies that it's a brand new transition.
-        same_action = self._actions[:size] == int(transition.action)
+        same_action = self._actions_view[:size] == int(transition.action)
         if not bool(same_action.any()):
             return False
 
         close_reward = (
-            self._rewards[:size] - float(transition.reward)
+            self._rewards_view[:size] - float(transition.reward)
         ).abs() <= self.reward_tolerance
         # candidates: the indices of the transitions that are similar to the current transition 
         # on action and reward (x, a, r, x, x, x)
@@ -425,15 +291,15 @@ class ContinuousUniReplayBuffer(UniReplayBuffer):
             return False
 
         candidate_state = transition.state.detach().reshape(-1).to(
-            device=self._states.device, dtype=self._states.dtype
+            device=self._states_view.device, dtype=self._states_view.dtype
         )
-        # self._states[candidates]: we only need to check the states
+        # self._states_view[candidates]: we only need to check the states
         # that are similar to the current transition on action and reward,
         # those transitions that are not similar to the current transition on action and reward
         # are finally determined as not similar to the current transition
         # even if they are similar to the current transition on state
         state_close = self._close_rows(
-            self._states[candidates], self._norms_sq[candidates], candidate_state
+            self._states_view[candidates], self._norms_sq[candidates], candidate_state
         )
         # If it's a brand new transition because of the s in (s,a,r,s',x,x) is brand new.
         # finalists: the index of transitions that are similar to the current transition on (s,a,r,x,x,x)
@@ -444,10 +310,10 @@ class ContinuousUniReplayBuffer(UniReplayBuffer):
         # If the new transition is similar with at least one transition on (s,a,r,x,x,x),
         # we need to check the next state.
         candidate_next_state = transition.next_state.detach().reshape(-1).to(
-            device=self._next_states.device, dtype=self._next_states.dtype
+            device=self._next_states_view.device, dtype=self._next_states_view.dtype
         )
         next_state_close = self._close_rows(
-            self._next_states[finalists], self._next_norms_sq[finalists], candidate_next_state
+            self._next_states_view[finalists], self._next_norms_sq[finalists], candidate_next_state
         )
         # If there is any true in next_state_close, 
         # which means there is at least one transition that is similar to the current transition
