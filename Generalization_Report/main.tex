@@ -11,8 +11,8 @@
 
 
 \title{Generalization in Reinforcement Learning}
-\author{Xiaojie Gu\\University of Wuerzburg}
-\date{}
+\author{Xiaojie Gu,Sebastian Griesbach,Carlo D'Eramo\\University of Wuerzburg}
+\date{25.09.2026}
 
 \begin{document}
 \maketitle
@@ -407,7 +407,7 @@ Here $z_{\theta}$ denotes the student's output: action logits for classification
 \begin{table}[htbp]
     \centering
     \small
-    \caption{Classification and regression students trained from frozen target-network labels on 4$\times$4 mazes (seed 42). Action agreement is measured against each teacher's greedy action on held-out observations. Maze success is measured after 102,400 updates on the 201 unseen validation mazes.}
+    \caption{Classification and regression students trained from frozen target-network labels on 4$\times$4 mazes. Action agreement is measured against each teacher's greedy action on held-out observations. Maze success is measured after 102,400 updates on the 201 unseen validation mazes.}
     \begin{tabular}{llccc}
         \hline
         Teacher & Student objective & \shortstack{Action agreement\\10,000 updates} & \shortstack{Action agreement\\102,400 updates} & \shortstack{Maze success\\102,400 updates} \\
@@ -422,7 +422,16 @@ Here $z_{\theta}$ denotes the student's output: action logits for classification
     \label{tab:classification_regression_probe}
 \end{table}
 
-For both frozen teachers, classification has higher held-out action agreement after 10,000 updates and at the final update. It also solves more validation mazes: 137 versus 116 for the DQN teacher, and 175 versus 162 for the ActorDQN teacher. Thus, with the same network architecture, initial weights, observations, update budget, and greedy evaluation rule, learning the teacher's preferred action performs better here than fitting all four numerical Q values. This supports the classification hypothesis for this probe. The result is from one seed and uses the teacher's preferred action as the state-level reference, rather than an independently known optimal action. It does not, by itself, establish that this mechanism explains the performance difference between the complete ActorDQN and DQN agents.
+\FloatBarrier
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{img/probe-action-agreement.png}
+    \caption{Held-out action agreement during student training, using the DQN target network (left) or ActorDQN target network (right) as the frozen teacher. Each point is a recorded minibatch-update checkpoint; step zero is before training. Classification and Q-value regression use the same observations and update budget (seed 42).}
+    \label{fig:probe_action_agreement}
+\end{figure}
+
+\FloatBarrier
+Figure~\ref{fig:probe_action_agreement} shows the intermediate checkpoints between the two updates highlighted in Table~\ref{tab:classification_regression_probe}. For both frozen teachers, classification has higher held-out action agreement after 10,000 updates and at the final update, though the curves do not maintain this ordering at every intermediate checkpoint. Classification also solves more validation mazes: 137 versus 116 for the DQN teacher, and 175 versus 162 for the ActorDQN teacher. Thus, with the same network architecture, initial weights, observations, update budget, and greedy evaluation rule, learning the teacher's preferred action performs better here than fitting all four numerical Q values. This supports the classification hypothesis for this probe. The result is from one seed and uses the teacher's preferred action as the state-level reference, rather than an independently known optimal action.
 
 \section{Conclusion}
 
