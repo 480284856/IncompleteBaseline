@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")"
 
 MODEL_DIR="models"
-OUTPUT_DIR="probe_results"
+OUTPUT_DIR="probe_results_greedy"
 
 python train_probe.py \
     --dqn-target "$MODEL_DIR/q_target_network_dqn.pt" \
@@ -17,4 +17,5 @@ python train_probe.py \
     --batch-size 64 \
     --learning-rate 0.001 \
     --max-episode-steps 1600 \
+    --maze-eval-steps 160 \
     --seed 42

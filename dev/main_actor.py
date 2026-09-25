@@ -18,7 +18,6 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ..algorithms.actordqn.actordqn_agent4maze import ActorDQNAgent4Maze
-# from ..algorithms.actordqn.actordqn_agent4mazeRandom_selection import ActorDQNAgent4Maze
 from ..envs.procedual_maze.env import Maze
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

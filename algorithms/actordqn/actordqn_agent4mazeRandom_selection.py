@@ -9,7 +9,7 @@ from ..common.qnetwork import QNetwork
 from .actordqn_agent4maze import ActorDQNAgent4Maze
 from tqdm import tqdm
 
-class ActorDQNAgent4Maze(ActorDQNAgent4Maze):
+class ActorDQNAgent4Maze4RandomSelection(ActorDQNAgent4Maze):
     def __init__(self,
                  seed,
                  input_dim,
@@ -127,3 +127,7 @@ class ActorDQNAgent4Maze(ActorDQNAgent4Maze):
         finally:
             self.tensorboard_writer.close()
             bar.close()
+
+    def get_policy(self, state:torch.Tensor, is_training:bool=False, *args, **kwargs) -> int:
+        action = self._rng.choice(range(0, self.output_dim))
+        return action

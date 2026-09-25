@@ -1,0 +1,5 @@
+step,teacher,task,solved,num_mazes,success_rate
+102400,dqn,classification,137,201,0.681592039800995
+102400,dqn,regression,116,201,0.5771144278606966
+102400,actordqn,classification,175,201,0.8706467661691543
+102400,actordqn,regression,162,201,0.8059701492537313

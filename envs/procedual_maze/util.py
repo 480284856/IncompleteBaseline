@@ -300,9 +300,8 @@ def iter_start_goal_pairs(width: int, height: int) -> Iterator[tuple[Position, P
     # the final result looks like this:
     # ((0, 0), (0, 1), (1, 0), (1, 1))
     cells = tuple(iter_grid_cells(width, height))
-    for start in cells:
-        for goal in cells:
-            if start != goal:
+    for i, start in enumerate(cells):
+        for goal in cells[i + 1:]:
                 yield start, goal
 
 

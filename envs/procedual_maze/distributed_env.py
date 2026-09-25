@@ -1,75 +1,41 @@
-from env import Maze
-import gymnasium as gym
 from functools import partial
+from env import MazeV2, generate_maze
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import SubprocVecEnv
 
-def make_maze_env(
-    width,
-    height,
-    training_mazes,
-    evaluation_mazes,
+def make_env(width, height, step_limitation, dataset):
+    return MazeV2(width=width, height=height, step_limitation=step_limitation, dataset=dataset)
+
+def create_dist_environments(
+    *,
+    n_env: int,
+    seed: int,
+    width: int,
+    height: int,
+    step_limitation: int,
 ):
-    env = Maze(width=width, height=height)
-    env.training_mazes = training_mazes
-    env.evaluation_mazes = evaluation_mazes
-    return env
-
-
-def create_vector_environment(width: int, height: int, seed: int, logger, num_train_envs,num_eval_envs) -> tuple[Maze, Maze]:
-    """Create independent environments backed by one generated maze dataset."""
-    source_environment = Maze(width=width, height=height)
-
-    # Generation is deterministic for a seed and can be expensive. Both
-    # environments may share these arrays because reset() copies a sampled maze
-    # before changing it.
-    maze_generator_code = source_environment.generate_maze.__func__.__code__
-    logger.warning(
-        "Maze generation is starting and may take a while (%s:%d).",
-        maze_generator_code.co_filename,
-        maze_generator_code.co_firstlineno,
-    )
-    source_environment.generate_maze(seed=seed)
-
-
-    training_environment = gym.vector.SyncVectorEnv(
-        [
-            partial(
-                make_maze_env,
-                width,
-                height,
-                source_environment.training_mazes,
-                source_environment.evaluation_mazes,
-            )
-            for _ in range(num_train_envs)
-        ],
-        autoreset_mode=gym.vector.AutoresetMode.SAME_STEP,
-    )
-
-    eval_environment = gym.vector.SyncVectorEnv(
-            [
-                partial(
-                    make_maze_env,
-                    width,
-                    height,
-                    source_environment.training_mazes,
-                    source_environment.evaluation_mazes,
-                )
-                for _ in range(num_eval_envs)
-            ],
-            autoreset_mode=gym.vector.AutoresetMode.SAME_STEP, # call reset() for each env at the same time
+    training_set, eval_set = generate_maze(seed=seed, split_ratio=0.2, width=width, height=height)
+    train_env_fns = [
+        partial(
+            make_env,
+            width=width,
+            height=height,
+            step_limitation=step_limitation,
+            dataset=training_set,
         )
+        for _ in range(n_env)
+    ]
+    training_env = SubprocVecEnv(
+        train_env_fns
+    )
+    eval_env = MazeV2(width=width, height=height, step_limitation=step_limitation, dataset=eval_set)
+    return training_env, eval_env
 
-    actor_eval_environment = gym.vector.SyncVectorEnv(
-                [
-                    partial(
-                        make_maze_env,
-                        width,
-                        height,
-                        source_environment.training_mazes,
-                        source_environment.evaluation_mazes,
-                    )
-                    for _ in range(num_eval_envs)
-                ],
-                autoreset_mode=gym.vector.AutoresetMode.SAME_STEP, # call reset() for each env at the same time
-            )
-
-    return training_environment, eval_environment, actor_eval_environment
+if __name__ == "__main__":
+    create_dist_environments(
+        n_env=2,
+        width=5,
+        height=5,
+        step_limitation=1000,
+        seed=42,
+    )

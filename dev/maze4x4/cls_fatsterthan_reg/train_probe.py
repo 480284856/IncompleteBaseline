@@ -34,9 +34,10 @@ def parse_args():
     parser.add_argument('--batch-size', type=int, default=64)
     parser.add_argument('--learning-rate', type=float, default=0.001)
     parser.add_argument('--max-episode-steps', type=int, default=1600)
+    parser.add_argument('--maze-eval-steps', type=int, default=160)
     parser.add_argument('--seed', type=int, default=42)
     args = parser.parse_args()
-    for name in ('num_transitions', 'steps', 'eval_every', 'batch_size', 'max_episode_steps'):
+    for name in ('num_transitions', 'steps', 'eval_every', 'batch_size', 'max_episode_steps', 'maze_eval_steps'):
         if getattr(args, name) < 1:
             parser.error(f'{name} must be positive')
     if not 0 < args.validation_fraction < 1 or args.learning_rate <= 0:
@@ -97,14 +98,26 @@ def evaluate(model, states, targets, labels, task):
     correct, squared_error = 0, 0.0
     for start in range(0, len(states), 4096):
         output = model(states[start:start + 4096])
-        if task == 'classification':
-            actions = torch.multinomial(output.softmax(dim=1), 1).squeeze(1)
-        else:
-            actions = output.argmax(1)
+        actions = output.argmax(1)
         correct += (actions == labels[start:start + 4096]).sum().item()
         squared_error += (output - targets[start:start + 4096]).square().sum().item()
     model.train()
     return correct / len(states), squared_error / targets.numel()
+
+
+@torch.no_grad()
+def evaluate_maze_success(model, env):
+    model.eval()
+    solved = 0
+    for maze_index in range(len(env.evaluation_mazes)):
+        state, _ = env.reset(options={'is_evaluation': True, 'maze_index': maze_index})
+        while True:
+            action = int(model(torch.from_numpy(state.reshape(1, -1))).argmax(1).item())
+            state, _, terminated, truncated, _ = env.step(action)
+            if terminated or truncated:
+                solved += int(terminated)
+                break
+    return solved, len(env.evaluation_mazes)
 
 
 def main():
@@ -200,6 +213,19 @@ def main():
                           f'action_accuracy={accuracy:.4f}', flush=True)
                 file.flush()
                 writer.flush()
+    maze_env = Maze(width=4, height=4, eval_step_limitation=args.maze_eval_steps)
+    try:
+        maze_env.generate_maze(seed=args.seed)
+        with (args.output_dir / 'maze_success.csv').open('w', newline='') as file:
+            results = csv.writer(file)
+            results.writerow(['step', 'teacher', 'task', 'solved', 'num_mazes', 'success_rate'])
+            for (teacher, task), student in students.items():
+                solved, num_mazes = evaluate_maze_success(student, maze_env)
+                results.writerow([args.steps, teacher, task, solved, num_mazes, solved / num_mazes])
+                print(f'maze_success teacher={teacher:8s} {task:14s} '
+                      f'{solved}/{num_mazes}', flush=True)
+    finally:
+        maze_env.close()
     print(f'Results: {args.output_dir}')
 
 
