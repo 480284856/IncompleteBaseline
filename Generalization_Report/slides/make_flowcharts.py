@@ -75,7 +75,7 @@ def flow_header(d, text):
 
 def dqn():
     im, d = canvas()
-    flow_header(d, "REPLAY TRANSITION   (s, a, r, s', done)")
+    flow_header(d, "REPLAY TRANSITION   (s, a, r, s')")
     txt(d, (77, 116), "TARGET BRANCH", 29, True, TEAL, "lm")
     txt(d, (77, 603), "ONLINE BRANCH", 29, True, TEAL, "lm")
 
@@ -84,8 +84,8 @@ def dqn():
     vector(d, (700, 197, 1080, 269), "Q_T(s', all actions)")
     box(d, (1200, 194, 1370, 270), "max", LABEL, size=42, bold=True)
     box(d, (1480, 156, 1900, 310),
-        "TD target\ny = r + γ(1 − done)\n· max Q_T(s', ·)", LABEL, size=31, bold=True)
-    box(d, (1510, 350, 1840, 420), "r, done", WHITE, size=35)
+        "TD target\ny = r + γ max Q_T(s', ·)", LABEL, size=31, bold=True)
+    box(d, (1510, 350, 1840, 420), "r", WHITE, size=35)
     box(d, (2060, 407, 2340, 570), "Regression\nloss (MSE)", LOSS, size=40, bold=True)
 
     box(d, (80, 672, 160, 748), "s", LABEL, size=45, bold=True)
@@ -109,7 +109,7 @@ def dqn():
 
 def actordqn():
     im, d = canvas()
-    flow_header(d, "REPLAY TRANSITION   (s, a, r, s', done)")
+    flow_header(d, "REPLAY TRANSITION   (s, a, r, s')")
     txt(d, (76, 110), "TARGET", 28, True, TEAL, "lm")
     txt(d, (76, 394), "ONLINE Q", 28, True, TEAL, "lm")
     txt(d, (76, 770), "ACTOR", 28, True, TEAL, "lm")
@@ -119,8 +119,8 @@ def actordqn():
     vector(d, (650, 171, 960, 233), "Q_T(s', ·)", size=30)
     box(d, (1060, 159, 1215, 235), "max", LABEL, size=39, bold=True)
     box(d, (1320, 130, 1730, 260),
-        "TD target\ny = r + γ(1 − done)\n· max Q_T(s', ·)", LABEL, size=28, bold=True)
-    box(d, (1455, 294, 1595, 351), "r, done", WHITE, size=27)
+        "TD target\ny = r + γ max Q_T(s', ·)", LABEL, size=28, bold=True)
+    box(d, (1455, 294, 1595, 351), "r", WHITE, size=27)
 
     box(d, (75, 449, 150, 519), "s", LABEL, size=42, bold=True)
     box(d, (245, 420, 550, 550), "Online Q\nnetwork", NET, size=39, bold=True)
@@ -165,10 +165,14 @@ def maze(d, x, y, cell=49):
         for col in range(4):
             xy = (x + col * cell, y + row * cell,
                   x + (col + 1) * cell, y + (row + 1) * cell)
-            fill = INK if (col, row) in walls else "#d9eeee" if (col, row) in path else WHITE
+            fill = "#000000" if (col, row) in walls else "#ebe3fe"
+            if (col, row) == (0, 0):
+                fill = "#d25d5a"
+            elif (col, row) == (3, 3):
+                fill = "#509863"
             d.rectangle(xy, fill=fill, outline=LINE, width=3)
-    txt(d, (x + cell / 2, y + cell / 2), "S", 31, True)
-    txt(d, (x + 3.5 * cell, y + 3.5 * cell), "G", 31, True)
+    txt(d, (x + cell / 2, y + cell / 2), "S", 31, True, color=WHITE)
+    txt(d, (x + 3.5 * cell, y + 3.5 * cell), "E", 31, True, color=WHITE)
 
 
 def justification():
