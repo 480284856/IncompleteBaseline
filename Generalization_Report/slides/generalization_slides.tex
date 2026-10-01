@@ -42,7 +42,7 @@
 }
 \graphicspath{{assets/}}
 
-\title{Generalization in Reinforcement Learning}
+\title{Generalization in DQN with Actor}
 \subtitle{ActorDQN vs DQN}
 \author{Xiaojie Gu}
 \institute{University of Wuerzburg}
@@ -111,13 +111,13 @@
   \begin{columns}[c,onlytextwidth]
     \begin{column}{0.38\textwidth}
       \centering
-      \href{run:../unitree/1787627734150609_english_male.mp4}{%
+      \href{run:../unitree/1787627734150609_english_male_natural_subtitled.mp4}{%
         \includegraphics[height=5.0cm,keepaspectratio]{unitree-poster.png}}
     \end{column}
     \begin{column}{0.58\textwidth}
       \Large A real-world robotics example\par\vspace{0.42cm}
       \normalsize
-      \href{run:../unitree/1787627734150609_english_male.mp4}{}
+      \href{run:../unitree/1787627734150609_english_male_natural_subtitled.mp4}{}
       \par\vspace{0.35cm}
       \small\color{muted}
     \end{column}
@@ -189,7 +189,7 @@
 
 % 9 — classification motivation
 \begin{frame}{Model Design: Why classification?}
-  \small\textbf{Hypothesis:} When the goal is to choose one option, learning the choice may be easier than fitting a precise score for every option.
+  \small\textbf{Hypothesis:} Classification is easier. It might use a general pattern that leads to better generalization.
   \par\vspace{0.30cm}
   \centering
   \begin{tikzpicture}[x=1cm,y=1cm]
@@ -218,7 +218,6 @@
       {learn the best-book\\label directly};
   \end{tikzpicture}
   \par\vspace{0.32cm}
-  \small\color{muted}In the maze: books $\leftrightarrow$ actions; scores $\leftrightarrow$ Q-values; selected book $\leftrightarrow$ action label.
 \end{frame}
 
 % 10 — DQN architecture
@@ -245,40 +244,38 @@
 
 % 13 — 4x4 table
 \begin{frame}{Performance in Maze: $4\times4$}
-  \small Held-out set: 201 mazes per seed \quad Step limit: 160
-  \vspace{0.55cm}
   \centering
+  \small Training set: 803 \textbar{} Evaluation set: 201\par
+  Step limit: 160\par
+  \vspace{0.55cm}
   \renewcommand{\arraystretch}{1.70}
-  \begin{tabular}{lcc}
+  \begin{tabular}{lccc}
     \toprule
-    Policy & Success rate & Mean steps, successful mazes \\
+    Policy & Success rate & Mean step & Optimal length \\
     \midrule
-    ActorDQN & $\mathbf{0.828\pm0.029}$ & $25.95\pm3.65$ \\
-    Basic DQN & $0.111\pm0.072$ & $\mathbf{4.42\pm0.94}$ \\
-    Uniform Random & $0.740\pm0.048$ & $63.86\pm4.04$ \\
+    ActorDQN & $\mathbf{0.828\pm0.029}$ & $\mathbf{49.01\pm6.60}$ & $6.163\pm0.143$ \\
+    Basic DQN & $0.111\pm0.072$ & $142.76\pm11.22$ & $6.163\pm0.143$ \\
+    Uniform Random & $0.740\pm0.048$ & $88.87\pm5.74$ & $6.163\pm0.143$ \\
     \bottomrule
   \end{tabular}
-  \par\vspace{0.48cm}
-  \small\color{muted}Mean $\pm$ sample SD across three seeds. 
 \end{frame}
 
 % 14 — 5x5 table
 \begin{frame}{Performance in Maze: $5\times5$}
-  \small Held-out set: 2,973 mazes per seed \quad Step limit: 250
-  \vspace{0.55cm}
   \centering
+  \small Training set: 11,891 \textbar{} Evaluation set: 2,973\par
+  Step limit: 250\par
+  \vspace{0.55cm}
   \renewcommand{\arraystretch}{1.70}
-  \begin{tabular}{lcc}
+  \begin{tabular}{lccc}
     \toprule
-    Policy & Success rate & Mean steps, successful mazes \\
+    Policy & Success rate & Mean step & Optimal length \\
     \midrule
-    ActorDQN & $\mathbf{0.673\pm0.027}$ & $48.26\pm5.09$ \\
-    Basic DQN & $0.129\pm0.036$ & $\mathbf{8.33\pm0.45}$ \\
-    Uniform Random & $0.564\pm0.004$ & $122.25\pm1.22$ \\
+    ActorDQN & $\mathbf{0.673\pm0.027}$ & $\mathbf{114.11\pm8.80}$ & $10.236\pm0.014$ \\
+    Basic DQN & $0.129\pm0.036$ & $218.71\pm8.52$ & $10.236\pm0.014$ \\
+    Uniform Random & $0.564\pm0.004$ & $178.01\pm0.43$ & $10.236\pm0.014$ \\
     \bottomrule
   \end{tabular}
-  \par\vspace{0.48cm}
-  \small\color{muted}Mean $\pm$ sample SD across three seeds. 
 \end{frame}
 
 % 15 — gap table
@@ -288,16 +285,15 @@
   \centering
   \renewcommand{\arraystretch}{1.42}
   \setlength{\tabcolsep}{6pt}
-  \begin{tabular}{llrrr}
+  \begin{tabular}{llrr}
     \toprule
-    Maze & Policy & $\Delta$ steps, all
-      & $\Delta$ steps, success & $\Delta$ success rate \\
+    Maze & Policy & $\Delta$ success rate & $\Delta$ mean step \\
     \midrule
-    $4\times4$ & ActorDQN & $-6.07$ & $-2.92$ & $+0.026$ \\
-                & Basic DQN & $-15.72$ & $+0.12$ & $+0.102$ \\
+    $4\times4$ & ActorDQN & $\mathbf{+0.026}$ & $\mathbf{-6.07}$ \\
+                & Basic DQN & $+0.102$ & $-15.72$ \\
     \midrule
-    $5\times5$ & ActorDQN & $-3.89$ & $-1.32$ & $+0.014$ \\
-                & Basic DQN & $-1.83$ & $+0.03$ & $+0.008$ \\
+    $5\times5$ & ActorDQN & $+0.014$ & $-3.89$ \\
+                & Basic DQN & $\mathbf{+0.008}$ & $\mathbf{-1.83}$ \\
     \bottomrule
   \end{tabular}
   \par\vspace{0.40cm}
@@ -306,35 +302,22 @@
 
 % 16 — probe architecture
 \begin{frame}{Justification for the Idea}
-  \small Two frozen teachers are tested separately: DQN target and ActorDQN target.
-  \vspace{0.10cm}
   \centering
-  \includegraphics[width=\textwidth,height=5.10cm,keepaspectratio]{justification-flow.png}
-  \par\vspace{0.10cm}
-  \scriptsize\color{muted}Matched students share architecture, initialization, minibatches, and update budget.
+  \includegraphics[width=\textwidth,height=6.20cm,keepaspectratio]{justification-handwritten.jpg}
 \end{frame}
 
 % 17 — probe table
 \begin{frame}{Classification vs. Q-value Regression}
-  \centering
-  \renewcommand{\arraystretch}{1.42}
-  \setlength{\tabcolsep}{4.5pt}
-  \begin{tabular}{llccc}
-    \toprule
-    Teacher & Objective
-      & \shortstack{Agreement\\10k updates}
-      & \shortstack{Agreement\\102.4k updates}
-      & \shortstack{Maze success\\102.4k updates} \\
-    \midrule
-    DQN & Classification & $\mathbf{0.868}$ & $\mathbf{0.899}$ & $\mathbf{137/201\;(0.682)}$ \\
-        & Regression & $0.800$ & $0.853$ & $116/201\;(0.577)$ \\
-    \midrule
-    ActorDQN & Classification & $\mathbf{0.964}$ & $\mathbf{0.967}$ & $\mathbf{175/201\;(0.871)}$ \\
-             & Regression & $0.910$ & $0.955$ & $162/201\;(0.806)$ \\
-    \bottomrule
-  \end{tabular}
-  \par\vspace{0.35cm}
-  \small\color{muted}Action agreement means matching the teacher's greedy action on held-out observations.
+  \begin{columns}[c,onlytextwidth]
+    \begin{column}{0.49\textwidth}
+      \centering
+      \includegraphics[width=\linewidth,height=6.20cm,keepaspectratio]{classification-results-handwritten.jpg}
+    \end{column}
+    \begin{column}{0.49\textwidth}
+      \centering
+      \includegraphics[width=\linewidth,height=6.20cm,keepaspectratio]{action-agreement-handwritten.jpg}
+    \end{column}
+  \end{columns}
 \end{frame}
 
 % 18 — closing

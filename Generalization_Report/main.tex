@@ -60,8 +60,8 @@ For a maze, there exist an optimal (or shortest) path from starting point to goa
     \label{fig:env_constraint}
 \end{figure}
 
-\subsection{A path finding algorithm}
-In order to ensure there is only one unique optimal path in the whole dataset, we developed an algorithm for building an achievable path from the starting point to the goal.
+\subsection{A maze building algorithm}
+To ensure each solution is unique in the dataset, we developed an algorithm for building an achievable path from the starting point to the goal.
 
 First, for an i by j maze, we iterate through its size by placing the starting point on every cell. Then we place the goal after the starting point. We iterate from the top left to the bottom right, we place the starting point on every cell of the maze. For each starting point, we place the goal following that same top-left to bottom-right order, except the goal's starting position for each starting point begins at the cell immediately following it, as shown in Figure ~\ref{fig:maze_path_finding}.
 \begin{figure}[htbp]
@@ -176,7 +176,7 @@ This procedure creates more complex layouts while preserving the intended optima
 
 \subsection{Observation design}
 
-In designing the observation, we try to make it satisfy the Markov property as much as possible. In other words, the information the agent needs to make a decision should be contained in its current observation. This reduces interference from partial observability.
+In designing the observation, we try to make it satisfy the Markov property. In other words, the information the agent needs to make a decision should be fully contained in its current observation. This reduces interference from partial observability.
 
 The observation has three parts:
 \begin{enumerate}
@@ -185,7 +185,7 @@ The observation has three parts:
     \item \textbf{The goal's location.} Similarly, two column vectors represent the goal's row and column, respectively.
 \end{enumerate}
 
-Figure~\ref{fig:maze_observation_design} shows how these three parts are placed together in a two-dimensional observation array. The four position columns use one-hot encoding for the agent's row and column and the goal's row and column.
+Figure~\ref{fig:maze_observation_design} shows how these three parts are placed together in a two-dimensional observation array. After concatenating those three parts, they will be flatten into a vector before sending to the model. The four position columns use one-hot encoding for the agent's row and column and the goal's row and column.
 
 \begin{figure}[htbp]
     \centering
@@ -239,36 +239,43 @@ All Q networks use a multilayer perceptron (MLP) with hidden-layer widths of 128
 The maximum number of steps per episode is the same for training and validation. We set it to ten times the number of cells in the maze: $4\times4\times10=160$ steps for a $4\times4$ maze, and $5\times5\times10=250$ steps for a $5\times5$ maze.
 
 
-The tables report three metrics on the full validation set. \emph{Mean Steps (All)} is the total number of steps across all mazes divided by the number of mazes, including both successful and truncated episodes. \emph{Mean Steps (Success)} is the average number of steps among episodes that reach the goal. \emph{Success Rate} is the number of mazes solved divided by the total number of validation mazes. Each table entry is the mean across three seeds, followed by the sample standard deviation.
+The tables report three metrics on the full validation set. \emph{Mean Steps (All)} is the total number of steps across all mazes divided by the number of mazes, including both successful and truncated episodes. \emph{Mean Steps (Success)} is the average number of steps among episodes that reach the goal. \emph{Success Rate} is the number of mazes solved divided by the total number of validation mazes. Each policy metric entry is the mean across three seeds, followed by the sample standard deviation. \emph{Mean Optimal Length} counts zero-valued cells in each original maze of the corresponding dataset before variation, which means the length of the shortest path in a maze.
 
 \begin{table}[htbp]
     \centering
     \caption{Performance on Maze4x4}
-    \begin{tabular}{lccc}
+    \small
+    \setlength{\tabcolsep}{4pt}
+    \begin{tabular}{lcccc}
         \hline
         Policy 
-        & Mean Steps (All)
-        & Mean Steps (Success)
+        & \shortstack{Mean Steps\\(All)}
+        & \shortstack{Mean Optimal\\Length}
+        & \shortstack{Mean Steps\\(Success)}
         & Success Rate \\
         \hline
 
         ActorDQN
         & $\mathbf{49.01 \pm 6.60}$
+        & $6.163 \pm 0.143$
         & $25.95 \pm 3.65$
         & $\mathbf{0.828 \pm 0.029}$ \\
 
         Basic DQN
         & $142.76 \pm 11.22$
+        & $6.163 \pm 0.143$
         & $\mathbf{4.42 \pm 0.94}$
         & $0.111 \pm 0.072$ \\
 
         Random Actor
         & $103.08 \pm 28.63$
+        & $6.163 \pm 0.143$
         & $60.71 \pm 5.67$
         & $0.566 \pm 0.265$ \\
 
         Uniform Random
         & $88.87 \pm 5.74$
+        & $6.163 \pm 0.143$
         & $63.86 \pm 4.04$
         & $0.740 \pm 0.048$ \\
 
@@ -280,31 +287,38 @@ The tables report three metrics on the full validation set. \emph{Mean Steps (Al
 \begin{table}[htbp]
     \centering
     \caption{Performance on Maze5x5}
-    \begin{tabular}{lccc}
+    \small
+    \setlength{\tabcolsep}{4pt}
+    \begin{tabular}{lcccc}
         \hline
         Policy 
-        & Mean Steps (All)
-        & Mean Steps (Success)
+        & \shortstack{Mean Steps\\(All)}
+        & \shortstack{Mean Optimal\\Length}
+        & \shortstack{Mean Steps\\(Success)}
         & Success Rate \\
         \hline
 
         ActorDQN
         & $\mathbf{114.11 \pm 8.80}$
+        & $10.236 \pm 0.014$
         & $48.26 \pm 5.09$
         & $\mathbf{0.673 \pm 0.027}$ \\
 
         Basic DQN
         & $218.71 \pm 8.52$
+        & $10.236 \pm 0.014$
         & $\mathbf{8.33 \pm 0.45}$
         & $0.129 \pm 0.036$ \\
 
         Random Actor
         & $189.21 \pm 15.92$
+        & $10.236 \pm 0.014$
         & $119.45 \pm 3.69$
         & $0.464 \pm 0.109$ \\
 
         Uniform Random
         & $178.01 \pm 0.43$
+        & $10.236 \pm 0.014$
         & $122.25 \pm 1.22$
         & $0.564 \pm 0.004$ \\
 
@@ -322,19 +336,21 @@ The 5$\times$5 results in Table~\ref{tab:maze5x5} show the same overall pattern.
 
 \subsection{Training Performance and Generalization Gap}
 
-Tables~\ref{tab:train_maze4x4} and~\ref{tab:train_maze5x5} report performance on the full training sets using the same checkpoints and evaluation procedure as above. Each seed has 803 training mazes for the 4$\times$4 environment and 11,891 for the 5$\times$5 environment. As in the validation tables, entries show the mean and sample standard deviation across three seeds.
+Tables~\ref{tab:train_maze4x4} and~\ref{tab:train_maze5x5} report performance on the full training sets using the same checkpoints and evaluation procedure as above. Each seed has 803 training mazes for the 4$\times$4 environment and 11,891 for the 5$\times$5 environment. As in the validation tables, policy metrics show the mean and sample standard deviation across three seeds.
 
 \begin{table}[htbp]
     \centering
     \caption{Training-set performance on 4$\times$4 mazes.}
-    \begin{tabular}{lccc}
+    \small
+    \setlength{\tabcolsep}{4pt}
+    \begin{tabular}{lcccc}
         \hline
-        Policy & Mean Steps (All) & Mean Steps (Success) & Success Rate \\
+        Policy & \shortstack{Mean Steps\\(All)} & \shortstack{Mean Optimal\\Length} & \shortstack{Mean Steps\\(Success)} & Success Rate \\
         \hline
-        ActorDQN & $\mathbf{42.94 \pm 11.52}$ & $23.03 \pm 4.25$ & $\mathbf{0.853 \pm 0.058}$ \\
-        Basic DQN & $127.04 \pm 25.23$ & $\mathbf{4.53 \pm 1.37}$ & $0.213 \pm 0.163$ \\
-        Random Actor & $99.75 \pm 30.62$ & $59.56 \pm 5.84$ & $0.590 \pm 0.278$ \\
-        Uniform Random & $85.74 \pm 3.71$ & $61.96 \pm 2.15$ & $0.757 \pm 0.024$ \\
+        ActorDQN & $\mathbf{42.94 \pm 11.52}$ & $5.999 \pm 0.036$ & $23.03 \pm 4.25$ & $\mathbf{0.853 \pm 0.058}$ \\
+        Basic DQN & $127.04 \pm 25.23$ & $5.999 \pm 0.036$ & $\mathbf{4.53 \pm 1.37}$ & $0.213 \pm 0.163$ \\
+        Random Actor & $99.75 \pm 30.62$ & $5.999 \pm 0.036$ & $59.56 \pm 5.84$ & $0.590 \pm 0.278$ \\
+        Uniform Random & $85.74 \pm 3.71$ & $5.999 \pm 0.036$ & $61.96 \pm 2.15$ & $0.757 \pm 0.024$ \\
         \hline
     \end{tabular}
     \label{tab:train_maze4x4}
@@ -343,14 +359,16 @@ Tables~\ref{tab:train_maze4x4} and~\ref{tab:train_maze5x5} report performance on
 \begin{table}[htbp]
     \centering
     \caption{Training-set performance on 5$\times$5 mazes.}
-    \begin{tabular}{lccc}
+    \small
+    \setlength{\tabcolsep}{4pt}
+    \begin{tabular}{lcccc}
         \hline
-        Policy & Mean Steps (All) & Mean Steps (Success) & Success Rate \\
+        Policy & \shortstack{Mean Steps\\(All)} & \shortstack{Mean Optimal\\Length} & \shortstack{Mean Steps\\(Success)} & Success Rate \\
         \hline
-        ActorDQN & $\mathbf{110.21 \pm 13.01}$ & $46.94 \pm 5.52$ & $\mathbf{0.688 \pm 0.046}$ \\
-        Basic DQN & $216.88 \pm 9.78$ & $\mathbf{8.36 \pm 0.34}$ & $0.137 \pm 0.041$ \\
-        Random Actor & $189.19 \pm 14.25$ & $118.87 \pm 3.78$ & $0.462 \pm 0.099$ \\
-        Uniform Random & $177.23 \pm 0.97$ & $123.44 \pm 0.33$ & $0.575 \pm 0.007$ \\
+        ActorDQN & $\mathbf{110.21 \pm 13.01}$ & $10.211 \pm 0.003$ & $46.94 \pm 5.52$ & $\mathbf{0.688 \pm 0.046}$ \\
+        Basic DQN & $216.88 \pm 9.78$ & $10.211 \pm 0.003$ & $\mathbf{8.36 \pm 0.34}$ & $0.137 \pm 0.041$ \\
+        Random Actor & $189.19 \pm 14.25$ & $10.211 \pm 0.003$ & $118.87 \pm 3.78$ & $0.462 \pm 0.099$ \\
+        Uniform Random & $177.23 \pm 0.97$ & $10.211 \pm 0.003$ & $123.44 \pm 0.33$ & $0.575 \pm 0.007$ \\
         \hline
     \end{tabular}
     \label{tab:train_maze5x5}

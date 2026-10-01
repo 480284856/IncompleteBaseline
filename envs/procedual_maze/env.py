@@ -304,6 +304,14 @@ class Maze(gym.Env):
             self._get_info(invalid_move=invalid_move),
         )
 
+    def calculate_optimal_path_length(self, mazes):
+        '''
+        Calculate the mean optimal path length for mazes in the dataset.
+        '''
+        # The path length is the number of zeros in an element of mazes.
+        path_lengths = np.count_nonzero(np.asarray(mazes) == 0, axis=(1, 2))+1
+        return float(np.mean(path_lengths))
+
 class MazeV2(gym.Env):
     def __init__(self, 
                  width=5, 
@@ -569,5 +577,24 @@ if __name__ == "__main__":
     #print(f"Total number of mazes generated: {len(env.pathfinding())}")
     #for i, maze in enumerate(env.evaluation_mazes):
     #    plot_maze(maze, show=False, save_path=f"maze_{i}.png")
-    env = Maze(width=6, height=6)
-    env.reset()
+    env_4x4 = Maze(width=4, height=4)
+    env_5x5 = Maze(width=5, height=5)
+
+    for env in (env_4x4, env_5x5):
+        mazes = env.pathfinding()
+        mean_lengths = []
+        print(f"{env.width}x{env.height}: total mazes={len(mazes)}")
+        for seed in range(42, 45):
+            env.training_mazes, env.evaluation_mazes = env.train_test_split(
+                mazes, test_size=0.2, random_state=seed
+            )
+            mean_length = env.calculate_optimal_path_length(env.evaluation_mazes)
+            mean_lengths.append(mean_length)
+            print(
+                f"seed={seed}, training={len(env.training_mazes)}, "
+                f"evaluation={len(env.evaluation_mazes)}, mean={mean_length:.6f}"
+            )
+        print(
+            f"Across seeds: mean={np.mean(mean_lengths):.6f}, "
+            f"std={np.std(mean_lengths, ddof=0):.6f}"
+        )

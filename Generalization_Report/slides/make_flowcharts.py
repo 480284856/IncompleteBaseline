@@ -172,6 +172,7 @@ def maze(d, x, y, cell=49):
                 fill = "#509863"
             d.rectangle(xy, fill=fill, outline=LINE, width=3)
     txt(d, (x + cell / 2, y + cell / 2), "S", 31, True, color=WHITE)
+    txt(d, (x + 1.5 * cell, y + 1.5 * cell), "A", 31, True, color=INK)
     txt(d, (x + 3.5 * cell, y + 3.5 * cell), "E", 31, True, color=WHITE)
 
 
