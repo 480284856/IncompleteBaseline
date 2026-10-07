@@ -10,7 +10,7 @@
 \usepackage[colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue]{hyperref}
 
 
-\title{Generalization in Reinforcement Learning}
+\title{Generalization in DQN with Actor}
 \author{Xiaojie Gu,Sebastian Griesbach,Carlo D'Eramo\\University of Wuerzburg}
 \date{25.09.2026}
 
@@ -27,9 +27,14 @@ Here, generalization means that an agent continues to perform well in scenarios 
 
 Performance in familiar settings alone is therefore insufficient. We also need to measure performance in unseen settings and the gap between the two. This distinction helps reveal whether the robot has learned transferable patterns or a procedure tied to its training conditions.
 
+\subsection{Generalization in DQN}
+
+DQN estimates the Q-value of a state-action pair, which relies on the information about future transitions. However, in a new environment, the future transitions are not available. Therefore, DQN largely can not perform well in the new environment at the beginning, and the estimated Q-value is not accurate because it has not learned the dynamics of the new environment.
+
 \subsection{Project Motivation: Classification Versus Regression}
 
-One intuition behind this project is that, when the ultimate goal is to make a choice, classification may be easier to learn than regression. Classification may encourage a model to focus on broad patterns that determine the choice, while regression asks it to fit finer numerical details. Though this is a hypothesis, we will give experimental result to support this intuition in the later section.
+The question is: How can we solve the problem that DQN has not learned the dynamics of the new environment at the beginning of training? One intuition is that we can reduce DQN's reliance on the information of future transitions or make shortcuts to reduce reliance on future transitions. One way is to directly learn the mapping from the state to the action, making the online Q network make decision directly on the state, but the label comes from a standard DQN Q-network, which is trained to estimate Q-values, so it doesn't eliminate the reliance on future information, instead, it paritially reduces the reliance on the future information.
+Another intuition behind this project is that when the ultimate goal is to make a choice, classification may be easier to learn than regression. Classification may encourage a model to focus on broad patterns that determine the choice, while regression asks it to fit finer numerical details. Though this is a hypothesis, we will give experimental result to support this intuition in the later section.
 
 An example is human preference annotation for the training of an LLM like ChatGPT. Suppose an annotator must select the best response from four candidate responses to the same question. In a regression formulation, the annotator has to assign each response a score at first, perhaps from 1 to 10. They need to assign a fine grained score before selection, like 1.1, 1.2 etc. Such fine distinctions can be difficult and time-consuming, from the view point of human subjective feeling. In a classification formulation, the annotator simply selects the best of the four responses, where broad cues such as clarity, relevance, and factual accuracy may be enough to make that choice. 
 
@@ -225,11 +230,10 @@ Training rollouts follow the normal DQN rollout procedure: actions are selected 
 \FloatBarrier
 \section{Experiment}
 
-In the maze task, the agent starts at a designated cell and must reach the goal cell by moving up, down, left, or right. We compare four policies on the validation mazes:
+In the maze task, the agent starts at a designated cell and must reach the goal cell by moving up, down, left, or right. We compare three policies on the validation mazes:
 \begin{enumerate}
     \item \textbf{Actor DQN} has three Q networks: an online network, a target network, and an actor network. At evaluation time, actions are sampled from the actor network's softmax distribution.
     \item \textbf{Basic DQN} has an online Q network and a target Q network. Its training rollouts use a fixed $\varepsilon$-greedy strategy with $\varepsilon=0.1$: 90\% exploitation and 10\% exploration. The results in the tables below use greedy action selection from the saved online network during evaluation. For Actor DQN, it also uses the same training rollouts as Basic DQN.
-    \item \textbf{Random Actor} uses the randomly initialized actor network of an ActorDQN whose network parameters were not trained. Evaluation actions are sampled from this actor's softmax distribution.
     \item \textbf{Uniform Random} selects each of the four actions with probability 25\% at every state.
 \end{enumerate}
 
@@ -266,12 +270,6 @@ The tables report three metrics on the full validation set. \emph{Mean Steps (Al
         & $6.163 \pm 0.143$
         & $\mathbf{4.42 \pm 0.94}$
         & $0.111 \pm 0.072$ \\
-
-        Random Actor
-        & $103.08 \pm 28.63$
-        & $6.163 \pm 0.143$
-        & $60.71 \pm 5.67$
-        & $0.566 \pm 0.265$ \\
 
         Uniform Random
         & $88.87 \pm 5.74$
@@ -310,12 +308,6 @@ The tables report three metrics on the full validation set. \emph{Mean Steps (Al
         & $\mathbf{8.33 \pm 0.45}$
         & $0.129 \pm 0.036$ \\
 
-        Random Actor
-        & $189.21 \pm 15.92$
-        & $10.236 \pm 0.014$
-        & $119.45 \pm 3.69$
-        & $0.464 \pm 0.109$ \\
-
         Uniform Random
         & $178.01 \pm 0.43$
         & $10.236 \pm 0.014$
@@ -332,7 +324,7 @@ The tables report three metrics on the full validation set. \emph{Mean Steps (Al
 
 Table~\ref{tab:maze4x4} shows that ActorDQN takes the fewest steps when averaged over all 4$\times$4 validation mazes (49.01) and achieves the highest success rate (0.828). Basic DQN takes the fewest steps among the mazes it solves (4.42), but its success rate is only 0.111. One possible explanation is that it succeeds mainly on easy mazes, such as those where the goal is only one or two moves from the start. In that case, its successful episodes would be short even though it fails on most mazes.
 
-The 5$\times$5 results in Table~\ref{tab:maze5x5} show the same overall pattern. ActorDQN again has the fewest steps across all validation mazes (114.11) and the highest success rate (0.673). Among successful episodes, it also takes fewer steps (48.26) than Random Actor (119.45) and Uniform Random (122.25). Basic DQN has a still lower success-only mean (8.33), but reaches the goal in only 0.129 of the validation mazes.
+The 5$\times$5 results in Table~\ref{tab:maze5x5} show the same overall pattern. ActorDQN again has the fewest steps across all validation mazes (114.11) and the highest success rate (0.673). Among successful episodes, it also takes fewer steps (48.26) than Uniform Random (122.25). Basic DQN has a still lower success-only mean (8.33), but reaches the goal in only 0.129 of the validation mazes.
 
 \subsection{Training Performance and Generalization Gap}
 
@@ -349,7 +341,6 @@ Tables~\ref{tab:train_maze4x4} and~\ref{tab:train_maze5x5} report performance on
         \hline
         ActorDQN & $\mathbf{42.94 \pm 11.52}$ & $5.999 \pm 0.036$ & $23.03 \pm 4.25$ & $\mathbf{0.853 \pm 0.058}$ \\
         Basic DQN & $127.04 \pm 25.23$ & $5.999 \pm 0.036$ & $\mathbf{4.53 \pm 1.37}$ & $0.213 \pm 0.163$ \\
-        Random Actor & $99.75 \pm 30.62$ & $5.999 \pm 0.036$ & $59.56 \pm 5.84$ & $0.590 \pm 0.278$ \\
         Uniform Random & $85.74 \pm 3.71$ & $5.999 \pm 0.036$ & $61.96 \pm 2.15$ & $0.757 \pm 0.024$ \\
         \hline
     \end{tabular}
@@ -367,7 +358,6 @@ Tables~\ref{tab:train_maze4x4} and~\ref{tab:train_maze5x5} report performance on
         \hline
         ActorDQN & $\mathbf{110.21 \pm 13.01}$ & $10.211 \pm 0.003$ & $46.94 \pm 5.52$ & $\mathbf{0.688 \pm 0.046}$ \\
         Basic DQN & $216.88 \pm 9.78$ & $10.211 \pm 0.003$ & $\mathbf{8.36 \pm 0.34}$ & $0.137 \pm 0.041$ \\
-        Random Actor & $189.19 \pm 14.25$ & $10.211 \pm 0.003$ & $118.87 \pm 3.78$ & $0.462 \pm 0.099$ \\
         Uniform Random & $177.23 \pm 0.97$ & $10.211 \pm 0.003$ & $123.44 \pm 0.33$ & $0.575 \pm 0.007$ \\
         \hline
     \end{tabular}

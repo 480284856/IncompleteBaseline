@@ -90,13 +90,17 @@ class ActorDQNAgent(DQNAgent):
 
     def update_qnetwork(self,):
         if len(self.replaybuffer) >= self.sample_batch_size:
+            # a list of (s,a,r,s')
             batch = self.replaybuffer.sample(batch_size=self.sample_batch_size)
 
+            # r+gamma*max(Q_s'a')
             td_target = self._td_target(batch)
 
+            # Q(s,a)
             prediction = self.qnetwork(batch.states)
             estimation = prediction.gather(1, batch.actions)
 
+            # (Q_sa - TD_target)^2
             loss = self.loss_fn(td_target, estimation)
             self.optim.zero_grad()
             loss.backward()
